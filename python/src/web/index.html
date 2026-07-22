@@ -1,0 +1,223 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="MediGen 临床辅助分析工作台">
+  <meta name="theme-color" content="#0f6558">
+  <title>MediGen · 临床辅助分析工作台</title>
+  <link rel="stylesheet" href="/static/styles.css">
+  <script src="/static/app.js" defer></script>
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="/" aria-label="MediGen 首页">
+      <span class="brand-mark" aria-hidden="true">
+        <svg viewBox="0 0 40 40" role="img">
+          <path d="M20 7v26M7 20h26"></path>
+          <circle cx="20" cy="20" r="16"></circle>
+        </svg>
+      </span>
+      <span>
+        <strong>MediGen</strong>
+        <small>Clinical analysis workspace</small>
+      </span>
+    </a>
+    <nav class="top-actions" aria-label="系统链接">
+      <a href="/docs" target="_blank" rel="noreferrer">API 文档</a>
+    </nav>
+  </header>
+
+  <main class="page-shell">
+    <section class="intro" aria-labelledby="page-title">
+      <div>
+        <p class="eyebrow">临床辅助 · 病例分析 · 教育内容</p>
+        <h1 id="page-title">对话式病例分析工作台</h1>
+        <p>输入病例信息，查看病情摘要、诊断候选、方案建议、医学编码、安全审计与教育内容。</p>
+      </div>
+      <div class="prototype-notice" role="note">
+        <span aria-hidden="true">!</span>
+        <p><strong>数据与使用范围</strong>仅提交合成或去标识化病例。禁止录入姓名、电话、邮箱、病历号等身份信息。分析结果须由具备资质的专业人员复核。</p>
+      </div>
+    </section>
+
+    <div class="workspace">
+      <section class="input-column" aria-labelledby="conversation-title">
+        <div class="panel conversation-panel">
+          <div class="panel-heading">
+            <div>
+              <span class="step-kicker">01 · 前置信息</span>
+              <h2 id="conversation-title">病例对话</h2>
+            </div>
+            <span class="session-badge">本次会话</span>
+          </div>
+
+          <div class="conversation-log" id="conversation-log" aria-live="polite">
+            <article class="message message-assistant">
+              <span class="avatar" aria-hidden="true">M</span>
+              <div class="message-content">
+                <p>请输入<strong>合成或去标识化</strong>病例。建议包含年龄、主要症状、持续时间、既往史、用药、生命体征和检查结果。</p>
+              </div>
+            </article>
+          </div>
+
+          <form id="analysis-form" novalidate>
+            <label for="patient-description" class="field-label">病情描述</label>
+            <div class="composer">
+              <textarea id="patient-description" name="patient-description" rows="6" minlength="10" maxlength="12000" placeholder="例如：一名 56 岁合成病例成人，近 3 个月出现口渴、多饮和乏力……" required></textarea>
+              <div class="composer-meta">
+                <span id="input-help">至少输入 10 个字符</span>
+                <span><output id="character-count">0</output> / 12000</span>
+              </div>
+            </div>
+            <p class="validation-message" id="validation-message" role="alert" hidden></p>
+
+            <div class="example-group" aria-label="合成病例示例">
+              <span>快速填入</span>
+              <button type="button" class="text-chip" data-case="stemi_interaction">前壁心梗与用药核查</button>
+              <button type="button" class="text-chip" data-case="pneumonia_allergy">肺炎与过敏核查</button>
+              <button type="button" class="text-chip" data-case="heart_failure">急性失代偿性心衰</button>
+            </div>
+
+            <section class="preference-section" aria-labelledby="preference-title">
+              <div class="section-heading-row">
+                <div>
+                  <span class="step-kicker">02 · 个性化</span>
+                  <h3 id="preference-title">内容偏好</h3>
+                </div>
+                <span class="optional-label">可选</span>
+              </div>
+
+              <fieldset class="preference-fieldset">
+                <legend>优先展示</legend>
+                <div class="choice-grid" id="preferred-categories">
+                  <label class="choice-pill"><input type="checkbox" value="disease_basics"><span>疾病基础</span></label>
+                  <label class="choice-pill"><input type="checkbox" value="test_explanation" checked><span>检查解读</span></label>
+                  <label class="choice-pill"><input type="checkbox" value="medication_safety"><span>用药安全</span></label>
+                  <label class="choice-pill"><input type="checkbox" value="lifestyle_education"><span>生活方式</span></label>
+                  <label class="choice-pill"><input type="checkbox" value="follow_up_education"><span>随访准备</span></label>
+                  <label class="choice-pill"><input type="checkbox" value="care_process"><span>就医流程</span></label>
+                  <label class="choice-pill"><input type="checkbox" value="warning_signs"><span>警示信号</span></label>
+                </div>
+              </fieldset>
+
+              <details class="exclusion-details">
+                <summary>排除内容类别</summary>
+                <fieldset class="preference-fieldset">
+                  <legend class="sr-only">不展示类别</legend>
+                  <div class="choice-grid choice-grid-excluded" id="excluded-categories">
+                    <label class="choice-pill"><input type="checkbox" value="disease_basics"><span>疾病基础</span></label>
+                    <label class="choice-pill"><input type="checkbox" value="test_explanation"><span>检查解读</span></label>
+                    <label class="choice-pill"><input type="checkbox" value="medication_safety"><span>用药安全</span></label>
+                    <label class="choice-pill"><input type="checkbox" value="lifestyle_education"><span>生活方式</span></label>
+                    <label class="choice-pill"><input type="checkbox" value="follow_up_education"><span>随访准备</span></label>
+                    <label class="choice-pill"><input type="checkbox" value="care_process"><span>就医流程</span></label>
+                    <label class="choice-pill"><input type="checkbox" value="warning_signs"><span>警示信号</span></label>
+                  </div>
+                </fieldset>
+              </details>
+
+              <div class="preference-fields">
+                <label>
+                  <span class="field-label">内容深度</span>
+                  <select id="preferred-depth">
+                    <option value="">不限定</option>
+                    <option value="beginner">入门</option>
+                    <option value="standard" selected>标准</option>
+                  </select>
+                </label>
+                <fieldset class="recommendation-count">
+                  <legend class="field-label">推荐数量</legend>
+                  <div class="segmented-control">
+                    <label><input type="radio" name="top-k" value="1"><span>1</span></label>
+                    <label><input type="radio" name="top-k" value="2"><span>2</span></label>
+                    <label><input type="radio" name="top-k" value="3" checked><span>3</span></label>
+                  </div>
+                </fieldset>
+              </div>
+
+              <label class="toggle-row">
+                <span>
+                  <strong>生成教育内容推荐</strong>
+                  <small>根据病例内容与阅读偏好匹配相关主题</small>
+                </span>
+                <input id="include-recommendations" type="checkbox" role="switch" checked>
+              </label>
+            </section>
+
+            <button class="primary-action" id="analyze-button" type="submit">
+              <span class="button-label">提交分析</span>
+              <span class="button-loader" aria-hidden="true"></span>
+            </button>
+          </form>
+        </div>
+      </section>
+
+      <section class="output-column" aria-labelledby="result-title">
+        <div class="panel result-panel">
+          <div class="result-toolbar">
+            <div>
+              <span class="step-kicker">03 · 结构化输出</span>
+              <h2 id="result-title">链路结果</h2>
+            </div>
+            <span class="result-time" id="result-time" hidden></span>
+          </div>
+
+          <div class="empty-state" id="results-empty">
+            <div class="empty-visual" aria-hidden="true">
+              <span>I</span><i></i><span>D</span><i></i><span>T</span><i></i><span>C</span><i></i><span>A</span><i class="dashed"></i><span>R</span>
+            </div>
+            <h3>输入一条合成病例</h3>
+            <p>提交病例后，各节点将展示处理时长、临床工作摘要和结构化结果。</p>
+          </div>
+
+          <div id="loading-state" class="loading-state" hidden aria-live="polite">
+            <div class="loading-orbit" aria-hidden="true"><span></span></div>
+            <h3>正在分析病例</h3>
+            <p>正在处理信息提取、诊断分析、方案建议、医学编码与安全审计。</p>
+            <div class="elapsed"><span id="elapsed-time">0</span> 秒</div>
+          </div>
+
+          <div id="results-view" hidden>
+            <section class="result-summary" id="result-summary" aria-label="分析摘要"></section>
+
+            <nav class="pipeline-nav" id="pipeline-nav" aria-label="链路阶段" role="tablist">
+              <button type="button" class="pipeline-step" id="stage-tab-intake" data-stage="intake" role="tab" aria-controls="stage-panel" aria-selected="false" tabindex="-1">
+                <span class="stage-index">01</span><span class="stage-name">信息提取</span><small>病情要素归档</small><b>准备</b>
+              </button>
+              <span class="pipeline-connector" aria-hidden="true"></span>
+              <button type="button" class="pipeline-step" id="stage-tab-diagnosis" data-stage="diagnosis" role="tab" aria-controls="stage-panel" aria-selected="false" tabindex="-1">
+                <span class="stage-index">02</span><span class="stage-name">诊断分析</span><small>证据整合与鉴别</small><b>准备</b>
+              </button>
+              <span class="pipeline-connector" aria-hidden="true"></span>
+              <button type="button" class="pipeline-step" id="stage-tab-treatment" data-stage="treatment" role="tab" aria-controls="stage-panel" aria-selected="false" tabindex="-1">
+                <span class="stage-index">03</span><span class="stage-name">方案建议</span><small>治疗与用药安全</small><b>准备</b>
+              </button>
+              <span class="pipeline-connector" aria-hidden="true"></span>
+              <button type="button" class="pipeline-step" id="stage-tab-coding" data-stage="coding" role="tab" aria-controls="stage-panel" aria-selected="false" tabindex="-1">
+                <span class="stage-index">04</span><span class="stage-name">医学编码</span><small>编码映射与分组</small><b>准备</b>
+              </button>
+              <span class="pipeline-connector" aria-hidden="true"></span>
+              <button type="button" class="pipeline-step" id="stage-tab-audit" data-stage="audit" role="tab" aria-controls="stage-panel" aria-selected="false" tabindex="-1">
+                <span class="stage-index">05</span><span class="stage-name">质量复核</span><small>隐私与完整性</small><b>准备</b>
+              </button>
+              <span class="pipeline-connector connector-external" aria-hidden="true"></span>
+              <button type="button" class="pipeline-step external-step" id="stage-tab-recommendations" data-stage="recommendations" role="tab" aria-controls="stage-panel" aria-selected="false" tabindex="-1">
+                <span class="stage-index">06</span><span class="stage-name">教育内容</span><small>主题遴选与生成</small><b>准备</b>
+              </button>
+            </nav>
+
+            <section class="stage-panel" id="stage-panel" role="tabpanel" aria-live="polite"></section>
+
+            <section class="issue-panel" id="issue-panel" hidden></section>
+          </div>
+        </div>
+      </section>
+    </div>
+  </main>
+
+  <footer>
+    <p>MediGen Clinical Workspace · 合成病例环境 · 所有结果须经专业人员复核</p>
+  </footer>
+</body>
+</html>

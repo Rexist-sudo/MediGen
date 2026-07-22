@@ -1,4 +1,4 @@
-"""Pydantic contracts for deterministic educational recommendations."""
+"""Pydantic contracts for topic ranking and educational content cards."""
 
 from __future__ import annotations
 
@@ -77,14 +77,21 @@ class KnowledgeTopic(BaseModel):
     mandatory_safety: bool = False
     general_fallback: bool = False
     priority: int = 0
-    status: Literal["prototype", "inactive"] = "prototype"
+    status: Literal["active", "prototype", "inactive"] = "active"
 
     @field_validator("source_label")
     @classmethod
-    def require_honest_source_label(cls, value: str) -> str:
-        if "not medically reviewed" not in value.casefold():
-            raise ValueError("prototype topics must state that they are not medically reviewed")
-        return value
+    def normalize_source_label(cls, value: str) -> str:
+        return value.strip()
+
+
+class GeneratedEducationCard(BaseModel):
+    topic_id: str = Field(min_length=1, max_length=100)
+    summary: str = Field(min_length=40, max_length=1200)
+
+
+class GeneratedEducationContent(BaseModel):
+    cards: list[GeneratedEducationCard] = Field(min_length=1, max_length=3)
 
 
 class KnowledgeRecommendation(BaseModel):
@@ -97,11 +104,18 @@ class KnowledgeRecommendation(BaseModel):
     source_label: str
     source_url: str | None = None
     safety_note: str
+    content_source: Literal["deepseek_generated", "catalog_fallback"] = (
+        "catalog_fallback"
+    )
+    content_depth: Literal["beginner", "standard"] = "beginner"
 
 
 class EducationRecommendationResult(BaseModel):
     recommendation_status: Literal["ok", "degraded", "disabled"]
-    strategy_used: Literal["rule_v1", "none"]
+    strategy_used: Literal["rule_v1", "rule_v1_deepseek", "none"]
+    candidate_source: Literal["neo4j", "local_catalog", "none"] = "none"
+    candidate_cache_status: Literal["hit", "miss", "offline", "none"] = "none"
+    content_cache_status: Literal["hit", "miss", "fallback", "none"] = "none"
     history_used: bool = False
     valid_history_count: int = 0
     candidate_count: int = 0

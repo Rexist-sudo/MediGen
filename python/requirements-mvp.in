@@ -5,3 +5,9 @@ pydantic-settings
 langgraph
 httpx
 structlog
+neo4j
+sqlalchemy
+psycopg2-binary
+redis
+presidio-analyzer
+fhir.resources

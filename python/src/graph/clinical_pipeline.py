@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from functools import lru_cache
+from time import perf_counter
 from typing import Callable
 
 from langgraph.graph import END, StateGraph
@@ -15,6 +16,19 @@ from ..agents.treatment_agent import treatment_agent
 from .state import ClinicalState
 
 Node = Callable[[ClinicalState], dict]
+
+
+def _timed_node(stage: str, node: Node) -> Node:
+    """Record wall-clock time while preserving the finite graph state."""
+
+    def invoke(state: ClinicalState) -> dict:
+        started = perf_counter()
+        output = node(state)
+        timings = dict(state.stage_timings_seconds)
+        timings[stage] = round(perf_counter() - started, 3)
+        return {**output, "stage_timings_seconds": timings}
+
+    return invoke
 
 
 def _route_after_diagnosis(state: ClinicalState) -> str:
@@ -34,11 +48,11 @@ def build_clinical_pipeline(
     """Compile a graph with no checkpoint memory and no backward edge."""
 
     workflow = StateGraph(ClinicalState)
-    workflow.add_node("intake", intake_node)
-    workflow.add_node("diagnosis", diagnosis_node)
-    workflow.add_node("treatment", treatment_node)
-    workflow.add_node("coding", coding_node)
-    workflow.add_node("audit", audit_node)
+    workflow.add_node("intake", _timed_node("intake", intake_node))
+    workflow.add_node("diagnosis", _timed_node("diagnosis", diagnosis_node))
+    workflow.add_node("treatment", _timed_node("treatment", treatment_node))
+    workflow.add_node("coding", _timed_node("coding", coding_node))
+    workflow.add_node("audit", _timed_node("audit", audit_node))
 
     workflow.set_entry_point("intake")
     workflow.add_edge("intake", "diagnosis")

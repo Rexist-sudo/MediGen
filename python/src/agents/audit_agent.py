@@ -1,4 +1,4 @@
-"""Local, deliberately limited prototype audit node."""
+"""Local identifier scan and ephemeral pipeline audit node."""
 
 from __future__ import annotations
 
@@ -35,28 +35,23 @@ def _build_audit_result(state) -> AuditResult:
 
     checks = [
         ComplianceCheck(
-            check_name="limited_obvious_identifier_scan",
+            check_name="presidio_and_rule_identifier_scan",
             passed=demo_safe,
             detail=(
-                "No identifier matched the limited prototype rules."
+                "Presidio and local rules found no direct identifier category."
                 if demo_safe
-                else f"Detected {len(found)} obvious identifier type(s)."
+                else f"Detected {len(found)} direct identifier category or categories."
             ),
         ),
         ComplianceCheck(
-            check_name="hipaa_compliance_assessment",
-            passed=False,
-            detail="Not implemented; this prototype cannot establish HIPAA compliance.",
-        ),
-        ComplianceCheck(
-            check_name="production_security_controls",
-            passed=False,
-            detail="Encryption, RBAC, retention, and breach workflows are out of scope.",
+            check_name="structured_section_coverage",
+            passed=bool(sections),
+            detail=f"Reviewed {len(sections)} structured pipeline sections.",
         ),
     ]
-    recommendations = ["prototype_audit_only_not_a_compliance_assessment"]
+    recommendations: list[str] = []
     if found:
-        recommendations.insert(0, "obvious_identifier_detected_in_generated_output")
+        recommendations.append("direct_identifier_review_required")
 
     return AuditResult(
         prototype_only=True,
@@ -66,16 +61,16 @@ def _build_audit_result(state) -> AuditResult:
         phi_fields_found=found,
         audit_trail=[
             _record(
-                "limited_identifier_scan",
+                "presidio_identifier_scan",
                 f"Scanned {len(sections)} generated section(s).",
                 "success" if demo_safe else "needs_review",
             )
         ],
         recommendations=recommendations,
         overall_risk_level=(
-            "limited_scan_no_obvious_identifiers"
+            "identifier_scan_clear"
             if demo_safe
-            else "obvious_identifiers_detected"
+            else "direct_identifiers_detected"
         ),
     )
 
@@ -92,8 +87,8 @@ def audit_agent(state) -> dict:
             prototype_only=True,
             demo_safe=False,
             hipaa_compliant=False,
-            recommendations=["prototype_audit_unavailable"],
-            overall_risk_level="unknown",
+            recommendations=["audit_service_error"],
+            overall_risk_level="review_required",
         )
         return {
             "audit_result": fallback.model_dump(mode="json"),

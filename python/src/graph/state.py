@@ -17,3 +17,4 @@ class ClinicalState(BaseModel):
     errors: list[str] = Field(default_factory=list)
     warnings: list[str] = Field(default_factory=list)
     current_agent: str = ""
+    stage_timings_seconds: dict[str, float] = Field(default_factory=dict)

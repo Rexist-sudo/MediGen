@@ -144,8 +144,8 @@
 |------|----------|
 | LLM输出校验 | Pydantic模型 + JSON解析 + cleanJsonResponse |
 | Pipeline容错 | MAX_DIAGNOSIS_RETRIES + errors列表 |
-| 确定性审计 | audit_agent.py 的正则规则引擎 |
-| 数据安全 | hipaa_service.py + PHI_PATTERNS |
+| 确定性审计 | audit_agent.py 的结构覆盖与结果检查 |
+| 输入保护 | phi_guard.py 的 Presidio 与本地规则扫描 |
 | 可观测性 | structlog + Actuator + ClinicalState.errors |
 
 ---
@@ -400,7 +400,7 @@
 
 **A：** 我做了两个关键决策来加速开发。第一，定义了"最小对齐契约"——三端必须对齐的是ClinicalState字段、API端点和Agent执行顺序，但编排实现可以不同。Python用LangGraph声明式图，Java/Go用命令式循环，这样Java/Go开发者不需要学习LangGraph。
 
-第二，我把Agent函数的System Prompt抽出来做统一管理——三端的Agent用相同的Prompt模板，只是调用LLM的方式不同（Python用langchain-openai，Java用spring-ai-openai，Go用go-openai）。
+第二，我把Agent函数的System Prompt抽出来做统一管理——三端的Agent使用一致的字段契约，只是调用LLM的方式不同（Python用httpx直连兼容接口，Java用spring-ai-openai，Go用go-openai）。
 
 第三，我设计了API契约测试——用同一个curl命令测试三端的/api/v1/clinical/analyze端点，验证响应结构一致。
 

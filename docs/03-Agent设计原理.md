@@ -609,9 +609,9 @@ class TestDrugInteraction:
         )
         assert interactions[0]["severity"] == "major"
 
-class TestHIPAAService:
+class TestIdentifierGuard:
     def test_detect_ssn(self):
-        findings = hipaa_service.detect_phi("SSN: 123-45-6789")
+        findings = phi_guard.find_obvious_identifiers("SSN: 123-45-6789")
         assert "ssn" in findings
 ```
 
@@ -623,9 +623,11 @@ class TestHIPAAService:
 # 使用unittest.mock替代LLM调用
 from unittest.mock import patch
 
-@patch('src.agents.intake_agent.ChatOpenAI')
-def test_intake_agent(mock_llm):
-    mock_llm.return_value.invoke.return_value.content = '{"name": "Test", "age": 30, ...}'
+@patch('src.agents.intake_agent.get_json_client')
+def test_intake_agent(mock_client):
+    mock_client.return_value.invoke_json.return_value = PatientInfo(
+        name="Unknown", age=30, gender="female", chief_complaint="headache"
+    )
 
     from src.graph.state import ClinicalState
     state = ClinicalState(raw_input="30-year-old female with headache")

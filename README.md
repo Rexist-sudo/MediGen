@@ -12,7 +12,7 @@
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.115+-009688?style=for-the-badge&logo=fastapi&logoColor=white)](python/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow?style=for-the-badge)](LICENSE)
 [![Docker](https://img.shields.io/badge/Docker-Ready-2496ED?style=for-the-badge&logo=docker&logoColor=white)](docker/)
-[![HIPAA](https://img.shields.io/badge/HIPAA-Compliant-green?style=for-the-badge)]()
+[![Data](https://img.shields.io/badge/Data-Synthetic_or_Deidentified-2E8B57?style=for-the-badge)]()
 [![FHIR R4](https://img.shields.io/badge/FHIR-R4-FF6B6B?style=for-the-badge)]()
 
 ---
@@ -26,6 +26,10 @@
 > 📋 **配套资源**：7篇深度技术文档 + 7篇面试准备材料 + 3种简历模板 + 50道高频面试题
 
 </div>
+
+---
+
+> **当前可运行验收范围（2026-07-22）**：本次本机交付以 [`python/`](python/) 为主，入口为 <http://127.0.0.1:8001/>。主分析链路真实使用 LangGraph、DeepSeek 兼容 API、Neo4j Cypher、Redis、PostgreSQL/SQLAlchemy、Presidio、`fhir.resources` 和本地 HAPI FHIR。MiniOneRec 上游训练与推理未纳入，教育主题采用本地确定性排序后由 DeepSeek 按内容深度生成正文。图谱、编码和药物规则均为有限本地目录；系统不声明 HIPAA 合规。部署、病例目录和逐项验收方法以 [Python 运行说明](python/README.md) 为准。
 
 ---
 
@@ -112,12 +116,12 @@
 |:---:|:---|
 | 🤖 **5个专业Agent** | Intake（接诊）→ Diagnosis（诊断）→ Treatment（治疗）→ Coding（编码）→ Audit（审计），Pipeline 架构 + 条件路由 |
 | 🌐 **三种语言实现** | Python（LangGraph + FastAPI）、Java（Spring Boot + LangGraph4j）、Go（Gin + go-openai），同一套架构 |
-| 🧠 **GraphRAG 知识图谱** | 基于 Neo4j 的医学知识图谱，支持症状→疾病→治疗的多跳推理，比传统 RAG 准确率高 30%+ |
-| 🏥 **FHIR R4 标准** | 完整对接 HL7 FHIR R4，Patient / Condition / MedicationRequest 资源转换，可直接接入医院 HIS 系统 |
-| 📋 **ICD-10 自动编码** | 自动将诊断映射为 ICD-10-CM 编码，并进行 MS-DRGs 分组，覆盖 50+ 常见病种 |
-| 💊 **药物交互检查** | 内置 DDI 数据库，检查药物-药物交互、药物-过敏禁忌，支持 10+ 种严重交互预警 |
-| 🔒 **HIPAA 全链路合规** | Safe Harbor 脱敏（18 类 PHI 标识符）、不可变审计日志、RBAC 访问控制、最小必要原则 |
-| 🐳 **Docker 一键部署** | PostgreSQL + Neo4j + Redis 基础设施全部 Docker 化，`docker-compose up` 一键启动 |
+| 🧠 **GraphRAG 知识图谱** | Neo4j 保存症状、疾病、照护概念与教育主题关系，诊断与教育候选执行真实 Cypher 检索 |
+| 🏥 **FHIR R4 数据链路** | 使用 `fhir.resources` 校验 Patient / Condition / MedicationRequest，并提交到本地 HAPI FHIR |
+| 📋 **ICD-10 编码辅助** | 模型生成候选编码，本地有限目录负责确定性描述与 DRG 补充 |
+| 💊 **药物安全检查** | 本地可审计规则检查现用药组合、新方案与现用药、药物与过敏史 |
+| 🔒 **输入与审计保护** | Presidio + 本地规则阻断明显标识符，PostgreSQL 保存只追加审计记录 |
+| 🐳 **Docker 本地数据服务** | PostgreSQL + Neo4j + Redis + HAPI FHIR 通过 Docker Compose 启动并接受就绪检查 |
 | 📝 **面试全套材料** | 简历模板、STAR 法回答、80+ 道八股文、50 道高频面试题、3 道系统设计题——全覆盖 |
 | ✅ **企业级代码质量** | 结构化日志（structlog）、优雅错误处理、类型注解、Pydantic 校验、完整的单元测试 |
 
@@ -223,7 +227,7 @@ graph TB
         PG[("PostgreSQL<br/>审计日志 + 会话")]
         Neo[("Neo4j<br/>医学知识图谱")]
         Redis[("Redis<br/>缓存 + 限流")]
-        LLM["OpenAI GPT-4o-mini<br/>LLM 推理"]
+        LLM["DeepSeek 兼容 API<br/>LLM 推理"]
     end
 
     REST --> LG
@@ -256,7 +260,7 @@ graph TB
 |:---|:---|:---|:---|
 | **Web 框架** | FastAPI 0.115+ | Spring Boot 3.3 | Gin 1.10 |
 | **Agent 编排** | LangGraph (StateGraph) | LangGraph4j 1.8 | 手写 Pipeline（Agent 接口） |
-| **LLM 集成** | langchain-openai | Spring AI (OpenAI) | go-openai |
+| **LLM 集成** | DeepSeek 兼容 API（直接 HTTP） | Spring AI (OpenAI) | go-openai |
 | **状态管理** | Pydantic BaseModel | Lombok @Builder | Go struct |
 | **数据库 ORM** | SQLAlchemy 2.0 | Spring Data JPA | 原生 database/sql |
 | **数据校验** | Pydantic v2 | Jakarta Validation | Gin Binding |
@@ -265,7 +269,7 @@ graph TB
 | **PHI 检测** | Presidio + 正则 | 正则引擎 | 正则引擎 |
 | **依赖管理** | pip + requirements.txt | Maven (pom.xml) | Go Modules |
 | **容器化** | Dockerfile + docker-compose | Dockerfile + docker-compose | Dockerfile + docker-compose |
-| **默认端口** | 8000 | 8080 | 8090 |
+| **默认端口** | 8001 | 8080 | 8090 |
 | **适合人群** | AI/ML 工程师、数据科学家 | 后端工程师、企业级开发者 | 高性能服务、微服务开发者 |
 
 ### 核心技术概念解释（给小白）
@@ -805,21 +809,12 @@ def intake_agent(state) -> dict:
     if not raw:
         return {"patient_info": None, "errors": ["No raw input provided"]}
 
-    settings = get_settings()
-    llm = ChatOpenAI(
-        model=settings.openai_model,
-        api_key=settings.openai_api_key,
-        temperature=0.1,  # 低温度 → 输出更确定性
+    patient = get_json_client().invoke_json(
+        task_name="intake",
+        system_prompt=INTAKE_SYSTEM_PROMPT,
+        user_prompt=f"Patient narrative:\n\n{raw}\n\nReturn JSON only.",
+        response_model=PatientInfo,
     )
-
-    messages = [
-        SystemMessage(content=INTAKE_SYSTEM_PROMPT),  # 专业的系统提示词
-        HumanMessage(content=f"Patient narrative:\n\n{raw}"),
-    ]
-
-    response = llm.invoke(messages)
-    patient_data = json.loads(response.content)
-    patient = PatientInfo(**patient_data)  # Pydantic 严格校验
 
     return {"patient_info": patient.model_dump(mode="json")}
 ```
@@ -1173,7 +1168,7 @@ def _mask_phi(data: dict) -> dict:
 - Python: [`python/src/agents/audit_agent.py`](python/src/agents/audit_agent.py)
 - Java: [`java/src/main/java/com/medical/agent/AuditAgent.java`](java/src/main/java/com/medical/agent/AuditAgent.java)
 - Go: [`go/internal/agent/audit.go`](go/internal/agent/audit.go)
-- HIPAA 服务: [`python/src/services/hipaa_service.py`](python/src/services/hipaa_service.py)
+- 标识符扫描: [`python/src/services/phi_guard.py`](python/src/services/phi_guard.py)（Presidio 与本地输入保护规则）
 
 ---
 
@@ -2014,7 +2009,7 @@ clinical-decision-system/
 │   │   │   ├── diagnosis_agent.py      # 诊断Agent — 生成鉴别诊断（带条件路由）
 │   │   │   ├── treatment_agent.py      # 治疗Agent — 循证治疗方案 + DDI检查
 │   │   │   ├── coding_agent.py         # 编码Agent — ICD-10自动编码 + DRGs分组
-│   │   │   └── audit_agent.py          # 审计Agent — HIPAA合规检查 + PHI脱敏
+│   │   │   └── audit_agent.py          # 审计Agent — 标识符扫描 + 结果完整性复核
 │   │   ├── api/                        # FastAPI REST API
 │   │   │   ├── __init__.py
 │   │   │   ├── main.py                 # FastAPI应用入口（中间件、路由注册）
@@ -2034,7 +2029,7 @@ clinical-decision-system/
 │   │   │   ├── icd10_service.py       # ICD-10编码查询 + DRGs分组
 │   │   │   ├── drug_interaction.py    # 药物交互检查（DDI数据库）
 │   │   │   ├── fhir_service.py        # FHIR R4资源转换 + 服务端推送
-│   │   │   └── hipaa_service.py       # HIPAA合规：PHI检测/脱敏/审计日志
+│   │   │   └── phi_guard.py           # Presidio与本地标识符扫描规则
 │   │   ├── config/                     # 配置管理
 │   │   │   ├── __init__.py
 │   │   │   └── settings.py            # 环境变量加载（Pydantic Settings）

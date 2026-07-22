@@ -1,0 +1,46 @@
+[
+  {
+    "id": "stemi_interaction",
+    "label": "前壁心梗与用药核查",
+    "readme_case_id": "case_002_variant",
+    "description": "一名 64 岁男性合成病例，90 分钟前突发持续性胸骨后压榨性疼痛，向左臂及下颌放射，伴大汗、恶心和呼吸困难；胸痛为重度，呼吸困难为中度。既往有持续性房颤 5 年、2 型糖尿病 8 年、高血压 10 年和高脂血症 6 年，无手术史。不吸烟，偶尔饮酒。父亲 55 岁时发生心肌梗死，母亲患 2 型糖尿病。青霉素过敏，既往出现轻度皮疹。当前用药：warfarin 3 mg 每日一次、metformin 500 mg 每日两次、lisinopril 10 mg 每日一次、atorvastatin 20 mg 每晚一次；院前急救记录显示已嚼服 aspirin 300 mg 单次。生命体征：体温 36.7°C，心率 112 次/分且节律不齐，血压 162/96 mmHg，呼吸频率 22 次/分，血氧饱和度 93%。查体：皮肤湿冷，心律不齐，双肺呼吸音清。检查结果：肌钙蛋白 I 2.8 ng/mL，升高；血糖 11.6 mmol/L，升高；肌酐 1.1 mg/dL；INR 2.3；LDL-C 3.4 mmol/L，升高。心电图显示 V2–V5 导联 ST 段抬高，胸部 X 线未见急性肺部异常。",
+    "expected": {
+      "primary_icd10": "I21.0",
+      "expected_drg": "280",
+      "minimum_confidence": 0.85,
+      "graph_disease": "Acute myocardial infarction",
+      "required_extracted_fields": ["symptoms", "medical_history", "family_history", "social_history", "current_medications", "allergies", "vital_signs", "physical_exam", "lab_results", "diagnostic_studies"],
+      "interaction_pair": ["warfarin", "aspirin"],
+      "input_features": ["symptoms", "medical_history", "surgical_history", "social_history", "family_history", "current_medications", "allergies", "vital_signs", "physical_exam", "lab_results", "ecg", "imaging"]
+    }
+  },
+  {
+    "id": "pneumonia_allergy",
+    "label": "肺炎与过敏核查",
+    "readme_case_id": "case_001_variant",
+    "description": "一名 47 岁女性合成病例，发热 38.9°C、咳黄色痰、右侧胸痛和活动后呼吸急促 4 天。既往有 2 型糖尿病和高血压，无手术史；不吸烟，不饮酒。青霉素过敏，既往出现全身皮疹；社区就诊后开始服用 amoxicillin 500 mg 每日三次，首剂后皮疹加重，另长期服用 metformin 500 mg 每日两次和 lisinopril 10 mg 每日一次。生命体征：血压 128/82 mmHg，心率 104 次/分，呼吸频率 23 次/分，室内空气血氧饱和度 93%。查体：右下肺呼吸音减弱，可闻及湿啰音。检查结果：白细胞 15800/μL、CRP 92 mg/L、降钙素原 2.4 ng/mL，均升高；胸部 X 线显示右下叶实变。",
+    "expected": {
+      "primary_icd10": "J18.1",
+      "expected_drg": "193",
+      "minimum_confidence": 0.85,
+      "graph_disease": "Pneumonia",
+      "required_extracted_fields": ["symptoms", "medical_history", "social_history", "current_medications", "allergies", "vital_signs", "physical_exam", "lab_results", "diagnostic_studies"],
+      "allergy_drug": "amoxicillin",
+      "input_features": ["symptoms", "medical_history", "surgical_history", "social_history", "current_medications", "allergies", "vital_signs", "physical_exam", "lab_results", "imaging"]
+    }
+  },
+  {
+    "id": "heart_failure",
+    "label": "急性失代偿性心衰",
+    "readme_case_id": "case_004",
+    "description": "一名 55 岁男性合成病例，近 1 个月活动后呼吸困难逐渐加重，目前轻微活动即可出现；伴双下肢水肿、需垫 3 个枕头入睡的端坐呼吸和夜间阵发性呼吸困难。既往有冠心病，3 年前接受 CABG，另有 2 型糖尿病和高血压；无明确心血管疾病家族史。不吸烟，偶尔饮酒。当前用药：carvedilol 25 mg 每日两次、furosemide 40 mg 每日一次、lisinopril 20 mg 每日一次、metformin 1000 mg 每日两次、aspirin 81 mg 每日一次。无已知药物过敏。生命体征：血压 100/65 mmHg，心率 95 次/分，呼吸频率 26 次/分，室内空气血氧饱和度 91%。查体见颈静脉怒张、双肺湿啰音和双侧 3+ 凹陷性水肿。BNP 1250 pg/mL，升高；胸部 X 线显示心脏增大并有双侧胸腔积液。",
+    "expected": {
+      "primary_icd10": "I50.9",
+      "expected_drg": "291",
+      "minimum_confidence": 0.85,
+      "graph_disease": "Heart failure",
+      "required_extracted_fields": ["symptoms", "medical_history", "surgical_history", "social_history", "current_medications", "vital_signs", "physical_exam", "lab_results", "diagnostic_studies"],
+      "input_features": ["symptoms", "medical_history", "surgical_history", "family_history", "social_history", "current_medications", "allergies", "vital_signs", "physical_exam", "lab_results", "imaging"]
+    }
+  }
+]

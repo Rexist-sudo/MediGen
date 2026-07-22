@@ -1,20 +1,30 @@
-version: "3.9"
-
 services:
   api:
     build: .
     ports:
-      - "8000:8000"
+      - "${APP_PORT:-8001}:8000"
     env_file:
       - .env
+    environment:
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      NEO4J_URI: bolt://neo4j:7687
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      FHIR_SERVER_URL: http://fhir:8080/fhir
     depends_on:
       postgres:
         condition: service_healthy
       redis:
         condition: service_healthy
+      neo4j:
+        condition: service_healthy
+      fhir:
+        condition: service_started
     restart: unless-stopped
 
   postgres:
+    container_name: medigen-postgres
     image: postgres:16-alpine
     environment:
       POSTGRES_DB: clinical_decision
@@ -32,7 +42,8 @@ services:
       retries: 5
 
   neo4j:
-    image: neo4j:5-community
+    container_name: medigen-neo4j
+    image: neo4j:5.26-community
     environment:
       NEO4J_AUTH: neo4j/${NEO4J_PASSWORD:-neo4jpass}
     ports:
@@ -40,16 +51,43 @@ services:
       - "7687:7687"
     volumes:
       - neo4jdata:/data
+    healthcheck:
+      test: ["CMD-SHELL", "cypher-shell -u neo4j -p $${NEO4J_PASSWORD:-neo4jpass} 'RETURN 1' >/dev/null 2>&1"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
 
   redis:
+    container_name: medigen-redis
     image: redis:7-alpine
     ports:
-      - "6379:6379"
+      - "${REDIS_PORT:-6380}:6379"
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 5s
       timeout: 5s
       retries: 5
+
+  fhir:
+    container_name: medigen-fhir
+    image: "${HAPI_IMAGE:-medigen/hapi-fhir:v8.10.0-3}"
+    environment:
+      hapi.fhir.fhir_version: R4
+      hapi.fhir.allow_external_references: "false"
+      hapi.fhir.enforce_referential_integrity_on_write: "false"
+      spring.datasource.url: jdbc:postgresql://postgres:5432/clinical_decision
+      spring.datasource.username: postgres
+      spring.datasource.password: ${POSTGRES_PASSWORD:-postgres}
+      spring.datasource.driverClassName: org.postgresql.Driver
+      spring.jpa.properties.hibernate.dialect: ca.uhn.fhir.jpa.model.dialect.HapiFhirPostgresDialect
+      spring.jpa.properties.hibernate.search.enabled: "false"
+    ports:
+      - "8080:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
 
 volumes:
   pgdata:

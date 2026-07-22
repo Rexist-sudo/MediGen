@@ -111,7 +111,7 @@ class RuleRecommendationRanker:
         safety_overrides: list[str] = []
 
         for topic in topics:
-            if topic.status != "prototype" or topic.general_fallback:
+            if topic.status not in {"active", "prototype"} or topic.general_fallback:
                 continue
             signals = self._match(context, topic)
             if not signals.clinical:
@@ -146,7 +146,7 @@ class RuleRecommendationRanker:
             already = {topic.topic_id for _, topic in scored}
             for topic in topics:
                 if (
-                    topic.status != "prototype"
+                    topic.status not in {"active", "prototype"}
                     or not topic.general_fallback
                     or topic.topic_id in already
                     or topic.category in excluded

@@ -25,14 +25,37 @@ CREATE TABLE IF NOT EXISTS clinical_sessions (
     treatment_plan  JSONB,
     coding_result   JSONB,
     audit_result    JSONB,
+    recommendation_result JSONB,
+    knowledge_context JSONB,
+    fhir_export     JSONB,
+    analysis_status VARCHAR(32),
+    llm_backend     VARCHAR(32),
     errors          JSONB DEFAULT '[]',
     created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
+ALTER TABLE clinical_sessions
+    ADD COLUMN IF NOT EXISTS recommendation_result JSONB,
+    ADD COLUMN IF NOT EXISTS knowledge_context JSONB,
+    ADD COLUMN IF NOT EXISTS fhir_export JSONB,
+    ADD COLUMN IF NOT EXISTS analysis_status VARCHAR(32),
+    ADD COLUMN IF NOT EXISTS llm_backend VARCHAR(32);
+
 CREATE INDEX idx_sessions_thread ON clinical_sessions (thread_id);
 CREATE INDEX idx_sessions_created ON clinical_sessions (created_at);
 
--- HIPAA: 6-year retention is enforced at application level
-COMMENT ON TABLE audit_logs IS 'HIPAA-compliant immutable audit trail. Retain for minimum 6 years.';
-COMMENT ON TABLE clinical_sessions IS 'Clinical pipeline session results. Contains PHI — access controlled.';
+CREATE OR REPLACE FUNCTION reject_audit_log_mutation()
+RETURNS trigger AS $$
+BEGIN
+    RAISE EXCEPTION 'audit_logs is append-only';
+END;
+$$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS audit_logs_append_only ON audit_logs;
+CREATE TRIGGER audit_logs_append_only
+BEFORE UPDATE OR DELETE ON audit_logs
+FOR EACH ROW EXECUTE FUNCTION reject_audit_log_mutation();
+
+COMMENT ON TABLE audit_logs IS 'Append-only local audit trail for synthetic or de-identified cases.';
+COMMENT ON TABLE clinical_sessions IS 'Clinical pipeline results for synthetic or de-identified cases.';

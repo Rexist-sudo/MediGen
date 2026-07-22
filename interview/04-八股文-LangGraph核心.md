@@ -877,7 +877,7 @@ func (p *Pipeline) Run(ctx context.Context, state *model.ClinicalState) error {
 | **编排方式** | LangGraph StateGraph（声明式） | do-while循环（命令式） | for循环（命令式） |
 | **状态定义** | Pydantic BaseModel | Lombok @Data @Builder | struct + JSON tag |
 | **Agent抽象** | 函数（Node） | Spring @Component类 | interface Agent |
-| **LLM调用** | langchain-openai ChatOpenAI | Spring AI ChatClient | go-openai |
+| **LLM调用** | httpx + Pydantic结构校验 | Spring AI ChatClient | go-openai |
 | **DI方式** | 无（函数式） | Spring IoC容器 | 构造函数注入 |
 | **错误处理** | try-except + errors列表 | try-catch + 状态更新 | error返回值 + 状态更新 |
 | **重试上限** | 无（需额外处理） | MAX=2 | MAX=2 |

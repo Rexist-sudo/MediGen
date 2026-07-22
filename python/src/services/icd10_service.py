@@ -63,6 +63,7 @@ ICD10_DATABASE = {
         "name": "Circulatory system diseases",
         "codes": {
             "I10": "Essential (primary) hypertension",
+            "I21.0": "ST elevation (STEMI) myocardial infarction of anterior wall",
             "I21.9": "Acute myocardial infarction, unspecified",
             "I50.9": "Heart failure, unspecified",
             "I63.9": "Cerebral infarction, unspecified",

@@ -19,15 +19,29 @@ Return ONLY a valid JSON object matching this example:
   "chief_complaint": "fatigue",
   "symptoms": [{"name": "fatigue", "duration_days": null, "severity": "moderate", "description": null}],
   "medical_history": [],
+  "surgical_history": [],
   "family_history": [],
+  "social_history": [],
   "allergies": [],
   "current_medications": [],
   "vital_signs": null,
-  "lab_results": []
+  "physical_exam": [],
+  "lab_results": [],
+  "diagnostic_studies": [{"study_name": "ECG", "result": "ST elevation in V2-V5", "is_abnormal": true}]
 }
 Use null for an unprovided age; never estimate it. Always use "Unknown" for name
-and null for patient_id. Use empty lists or null for missing fields. Do not extract
-direct identifiers. The output must be JSON and contain no markdown."""
+and null for patient_id. Every list field must be a JSON array; use [] when it is
+missing and never use null for a list. Severity must be mild, moderate, severe,
+critical, or null. Only put a test in lab_results when the narrative reports an
+actual laboratory result; a suggested future test is not a lab result. Put ECG,
+X-ray, CT, ultrasound, MRI, and similar completed tests in diagnostic_studies.
+Put examination findings in physical_exam. Lab values and diagnostic findings
+must be strings. Preserve every provided history, medication, allergy, vital,
+exam, laboratory, and completed diagnostic-study fact without adding new facts.
+Use clear Simplified Chinese for narrative text when the source is Chinese,
+while retaining unambiguous generic medication names and standard test
+abbreviations. Do not extract direct identifiers. The output must be JSON and
+contain no markdown."""
 
 
 def intake_agent(state) -> dict:

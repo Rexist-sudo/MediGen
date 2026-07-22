@@ -1,4 +1,4 @@
-"""Validated JSONL store for fixed prototype education cards."""
+"""Validated JSONL fallback catalog for education topics."""
 
 from __future__ import annotations
 
@@ -55,12 +55,16 @@ class TopicStore:
 
         if not topics:
             raise TopicStoreError("topic catalog is empty")
-        if not any(topic.status == "prototype" for topic in topics):
-            raise TopicStoreError("topic catalog has no active prototype topics")
+        if not any(topic.status in {"active", "prototype"} for topic in topics):
+            raise TopicStoreError("topic catalog has no active topics")
         return cls(topics)
 
     def list_active(self) -> list[KnowledgeTopic]:
-        return [topic for topic in self._topics if topic.status == "prototype"]
+        return [
+            topic
+            for topic in self._topics
+            if topic.status in {"active", "prototype"}
+        ]
 
     def get(self, topic_id: str) -> KnowledgeTopic | None:
         return self._by_id.get(topic_id)

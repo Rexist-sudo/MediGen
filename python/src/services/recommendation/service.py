@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
+from collections.abc import Callable
 from datetime import timezone
 from functools import cached_property, lru_cache
 
@@ -10,6 +13,7 @@ import structlog
 from ...config.settings import get_settings
 from ...models.recommendation import (
     EducationRecommendationResult,
+    GeneratedEducationContent,
     KnowledgeRecommendation,
     KnowledgeTopic,
     RecommendationContext,
@@ -17,6 +21,13 @@ from ...models.recommendation import (
     UserHistoryContext,
     UserPreferenceContext,
 )
+from ..deepseek_client import (
+    DeepSeekOutputError,
+    JSONClient,
+    get_json_client,
+)
+from ..graphrag_service import GraphRAGService, get_graphrag_service
+from ..redis_service import RedisService, get_redis_service
 from .ranker import MatchSignals, RuleRecommendationRanker
 from .topic_store import TopicStore, resolve_topic_path
 
@@ -98,6 +109,10 @@ class RecommendationService:
         ranker: RuleRecommendationRanker,
         enabled: bool,
         max_history_interactions: int = 20,
+        topic_provider: GraphRAGService | None = None,
+        content_client_factory: Callable[[], JSONClient] | None = None,
+        cache: RedisService | None = None,
+        generate_content: bool = False,
     ):
         self.topic_path = topic_path
         self.ranker = ranker
@@ -106,6 +121,10 @@ class RecommendationService:
             0,
             min(20, max_history_interactions),
         )
+        self.topic_provider = topic_provider
+        self.content_client_factory = content_client_factory
+        self.cache = cache
+        self.generate_content = generate_content
 
     @cached_property
     def topic_store(self) -> TopicStore:
@@ -113,7 +132,10 @@ class RecommendationService:
 
     def is_store_ready(self) -> bool:
         try:
-            return bool(self.topic_store.list_active())
+            local_ready = bool(self.topic_store.list_active())
+            if self.topic_provider and self.topic_provider.use_neo4j:
+                return local_ready and self.topic_provider.is_ready()
+            return local_ready
         except Exception as exc:
             logger.warning(
                 "recommendation.readiness_failed",
@@ -136,16 +158,18 @@ class RecommendationService:
             )
 
         try:
-            topics = self.topic_store.list_active()
             warnings: list[str] = []
             preferences = self._normalize_preferences(user_preferences, warnings)
+            context = build_recommendation_context(clinical_result)
+            topics, candidate_source, candidate_cache_status = self._candidate_topics(
+                context,
+                warnings,
+            )
             history = self._normalize_history(
                 user_history_context,
                 topics,
                 warnings,
             )
-            context = build_recommendation_context(clinical_result)
-
             audit_present = isinstance(clinical_result.get("audit_result"), dict)
             degraded_for_audit = audit_present and not context.demo_safe
             if not audit_present:
@@ -184,6 +208,31 @@ class RecommendationService:
                 )
                 for index, topic in enumerate(ranking.topics, start=1)
             ]
+            strategy = "rule_v1"
+            content_cache_status = "none"
+            if (
+                recommendations
+                and self.generate_content
+                and self.content_client_factory is not None
+            ):
+                try:
+                    recommendations, content_cache_status = self._generate_content(
+                        recommendations=recommendations,
+                        context=context,
+                        depth=(
+                            preferences.preferred_depth
+                            if preferences and preferences.preferred_depth
+                            else "beginner"
+                        ),
+                    )
+                    strategy = "rule_v1_deepseek"
+                except Exception as exc:
+                    logger.warning(
+                        "recommendation.content_generation_failed",
+                        error_type=type(exc).__name__,
+                    )
+                    warnings.append("education_content_generation_fallback")
+                    content_cache_status = "fallback"
             logger.info(
                 "recommendation.success",
                 candidate_count=ranking.candidate_count,
@@ -194,7 +243,10 @@ class RecommendationService:
                 recommendation_status=(
                     "degraded" if degraded_for_audit else "ok"
                 ),
-                strategy_used="rule_v1",
+                strategy_used=strategy,
+                candidate_source=candidate_source,
+                candidate_cache_status=candidate_cache_status,
+                content_cache_status=content_cache_status,
                 history_used=bool(history),
                 valid_history_count=len(history),
                 candidate_count=ranking.candidate_count,
@@ -211,6 +263,112 @@ class RecommendationService:
                 strategy_used="none",
                 warnings=["recommendation_unavailable"],
             )
+
+    def _candidate_topics(
+        self,
+        context: RecommendationContext,
+        warnings: list[str],
+    ) -> tuple[list[KnowledgeTopic], str, str]:
+        if self.topic_provider is None:
+            return self.topic_store.list_active(), "local_catalog", "offline"
+        try:
+            result = self.topic_provider.find_education_topics(
+                context.model_dump(mode="json", exclude={"demo_safe"})
+            )
+            topics = [KnowledgeTopic.model_validate(item) for item in result["topics"]]
+            if topics:
+                return topics, "neo4j", result["cache_status"]
+            warnings.append("knowledge_graph_candidates_empty")
+        except Exception as exc:
+            logger.warning(
+                "recommendation.graph_retrieval_failed",
+                error_type=type(exc).__name__,
+            )
+            warnings.append("knowledge_graph_catalog_fallback")
+        return self.topic_store.list_active(), "local_catalog", "offline"
+
+    def _generate_content(
+        self,
+        *,
+        recommendations: list[KnowledgeRecommendation],
+        context: RecommendationContext,
+        depth: str,
+    ) -> tuple[list[KnowledgeRecommendation], str]:
+        cache_payload = {
+            "topic_ids": [item.topic_id for item in recommendations],
+            "depth": depth,
+            "context": context.model_dump(mode="json"),
+        }
+        digest = hashlib.sha256(
+            json.dumps(
+                cache_payload,
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+            ).encode("utf-8")
+        ).hexdigest()
+        cache_key = f"medigen:education:{digest}"
+        generated_payload = self.cache.get_json(cache_key) if self.cache else None
+        cache_status = "hit" if isinstance(generated_payload, dict) else "miss"
+
+        if isinstance(generated_payload, dict):
+            generated = GeneratedEducationContent.model_validate(generated_payload)
+        else:
+            depth_instruction = (
+                "Use plain language, define clinical terms, and keep each card between 100 and 180 Chinese characters."
+                if depth == "beginner"
+                else "Use clinically precise language with mechanisms, interpretation boundaries, and practical follow-up points; keep each card between 220 and 420 Chinese characters."
+            )
+            generated = self.content_client_factory().invoke_json(
+                task_name="education_content",
+                system_prompt=(
+                    "Generate Chinese patient-education card content for the exact candidate topics supplied. "
+                    "Return JSON only with shape {\"cards\":[{\"topic_id\":\"...\",\"summary\":\"...\"}]}. "
+                    "Keep every topic_id unchanged and return one card per supplied topic. "
+                    "Use only the bounded clinical context and general medical knowledge. Do not diagnose, prescribe, "
+                    "specify individualized doses, or add patient facts. Use direct, clear system copy without "
+                    "development-stage terminology or contrastive '不是...而是' phrasing. "
+                    + depth_instruction
+                ),
+                user_prompt=json.dumps(
+                    {
+                        "content_depth": depth,
+                        "clinical_context": context.model_dump(mode="json"),
+                        "candidate_topics": [
+                            {
+                                "topic_id": item.topic_id,
+                                "title": item.title,
+                                "category": item.category.value,
+                                "selection_reason": item.reason,
+                            }
+                            for item in recommendations
+                        ],
+                    },
+                    ensure_ascii=False,
+                    separators=(",", ":"),
+                ),
+                response_model=GeneratedEducationContent,
+                max_tokens=1800,
+            )
+            if self.cache:
+                self.cache.set_json(cache_key, generated.model_dump(mode="json"))
+
+        by_topic = {item.topic_id: item.summary for item in generated.cards}
+        expected = {item.topic_id for item in recommendations}
+        if not expected.issubset(by_topic):
+            raise DeepSeekOutputError("generated education cards are incomplete")
+        depth_label = "入门" if depth == "beginner" else "标准"
+        return [
+            item.model_copy(
+                update={
+                    "summary": by_topic[item.topic_id],
+                    "source_label": f"DeepSeek 生成 · {depth_label}内容",
+                    "content_source": "deepseek_generated",
+                    "content_depth": depth,
+                }
+            )
+            for item in recommendations
+        ], cache_status
 
     @staticmethod
     def _normalize_preferences(
@@ -302,7 +460,7 @@ class RecommendationService:
         elif signals.code or signals.diagnosis:
             reason = "该主题与当前诊断类别相关。"
         else:
-            reason = "这是用于软件原型演示的通用教育主题。"
+            reason = "该主题与当前结果中的健康教育需求相关。"
 
         preference_matches: list[str] = []
         if preferences and preferences.preferred_depth == topic.depth:
@@ -333,4 +491,20 @@ def get_recommendation_service() -> RecommendationService:
         ranker=RuleRecommendationRanker(),
         enabled=settings.recommendation_enabled,
         max_history_interactions=settings.max_history_interactions,
+        topic_provider=get_graphrag_service(),
+        content_client_factory=(
+            get_json_client
+            if settings.llm_backend == "deepseek"
+            and settings.recommendation_generate_content
+            else None
+        ),
+        cache=(
+            get_redis_service()
+            if settings.llm_backend == "deepseek"
+            else None
+        ),
+        generate_content=(
+            settings.llm_backend == "deepseek"
+            and settings.recommendation_generate_content
+        ),
     )

@@ -10,7 +10,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
-    """Runtime settings for the local MVP and optional demo services."""
+    """Runtime settings for the local clinical analysis workspace."""
 
     model_config = SettingsConfigDict(
         env_file=".env",
@@ -28,35 +28,42 @@ class Settings(BaseSettings):
     deepseek_max_retries: int = Field(default=1, ge=0, le=2)
     deepseek_max_tokens: int = Field(default=2048, ge=256, le=8192)
 
-    # Recommendation MVP
+    # Recommendation
     recommendation_enabled: bool = True
     recommendation_top_k: int = Field(default=3, ge=1, le=3)
     recommendation_topic_path: str = (
         "./data/recommendation/knowledge_topics.jsonl"
     )
     max_history_interactions: int = Field(default=20, ge=0, le=100)
+    recommendation_generate_content: bool = True
 
-    # Prototype input guard
+    # Input guard and infrastructure policy
     prototype_reject_obvious_phi: bool = True
+    infrastructure_required: bool = True
 
     # PostgreSQL
     postgres_host: str = "localhost"
     postgres_port: int = 5432
     postgres_db: str = "clinical_decision"
     postgres_user: str = "postgres"
-    postgres_password: str = ""
+    postgres_password: str = "postgres"
 
     # Neo4j
     neo4j_uri: str = "bolt://localhost:7687"
     neo4j_user: str = "neo4j"
-    neo4j_password: str = ""
+    neo4j_password: str = "neo4jpass"
+    neo4j_database: str = "neo4j"
 
     # Redis
     redis_host: str = "localhost"
-    redis_port: int = 6379
+    redis_port: int = 6380
+    redis_database: int = Field(default=0, ge=0, le=15)
+    redis_cache_ttl_seconds: int = Field(default=1800, ge=60, le=86400)
+    rate_limit_requests_per_minute: int = Field(default=20, ge=1, le=1000)
 
     # FHIR
     fhir_server_url: str = "http://localhost:8080/fhir"
+    fhir_timeout_seconds: float = Field(default=30.0, gt=0, le=120)
 
     # App
     app_host: str = "0.0.0.0"
@@ -70,6 +77,14 @@ class Settings(BaseSettings):
             f"postgresql://{self.postgres_user}:{self.postgres_password}"
             f"@{self.postgres_host}:{self.postgres_port}/{self.postgres_db}"
         )
+
+    @property
+    def sqlalchemy_database_uri(self) -> str:
+        return self.postgres_dsn.replace("postgresql://", "postgresql+psycopg2://", 1)
+
+    @property
+    def redis_url(self) -> str:
+        return f"redis://{self.redis_host}:{self.redis_port}/{self.redis_database}"
 
     @property
     def cors_origin_list(self) -> list[str]:

@@ -58,6 +58,41 @@ def _clean_json_text(value: str) -> str:
     return text
 
 
+def _safe_validation_summary(exc: ValidationError) -> list[dict[str, str]]:
+    """Return schema diagnostics without logging values or model output text."""
+
+    summary: list[dict[str, str]] = []
+    for item in exc.errors(include_input=False, include_url=False)[:8]:
+        location = ".".join(str(part) for part in item.get("loc", ())) or "root"
+        summary.append(
+            {
+                "location": location,
+                "type": str(item.get("type", "validation_error")),
+            }
+        )
+    return summary
+
+
+def _repair_instruction(
+    response_model: type[BaseModel],
+    issues: list[dict[str, str]],
+) -> str:
+    issue_text = ", ".join(
+        f"{item['location']} ({item['type']})" for item in issues
+    ) or "root (invalid_json)"
+    schema = json.dumps(
+        response_model.model_json_schema(),
+        ensure_ascii=False,
+        separators=(",", ":"),
+    )
+    return (
+        "Return a new corrected JSON object only. A prior attempt did not match "
+        f"the contract at: {issue_text}. Preserve only facts present in the "
+        "original input; use null or an empty list for genuinely missing optional "
+        f"data. Required JSON Schema: {schema}"
+    )
+
+
 class DeepSeekJSONClient:
     """Synchronous DeepSeek client with validation and bounded retries."""
 
@@ -103,12 +138,13 @@ class DeepSeekJSONClient:
         response_model: type[T],
         max_tokens: int | None = None,
     ) -> T:
+        base_messages = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt},
+        ]
         payload = {
             "model": self.settings.deepseek_model,
-            "messages": [
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_prompt},
-            ],
+            "messages": base_messages,
             "stream": False,
             "thinking": {"type": "disabled"},
             "temperature": 0,
@@ -149,8 +185,45 @@ class DeepSeekJSONClient:
                 if not isinstance(content, str) or not content.strip():
                     raise DeepSeekOutputError("DeepSeek returned empty content")
 
-                parsed = json.loads(_clean_json_text(content))
-                result = response_model.model_validate(parsed)
+                try:
+                    parsed = json.loads(_clean_json_text(content))
+                except json.JSONDecodeError as exc:
+                    logger.warning(
+                        "deepseek.invalid_json",
+                        task=task_name,
+                        content_length=len(content),
+                        error_position=exc.pos,
+                    )
+                    if attempt + 1 < attempts:
+                        payload["messages"] = base_messages + [
+                            {
+                                "role": "user",
+                                "content": _repair_instruction(response_model, []),
+                            }
+                        ]
+                    raise
+
+                try:
+                    result = response_model.model_validate(parsed)
+                except ValidationError as exc:
+                    issues = _safe_validation_summary(exc)
+                    logger.warning(
+                        "deepseek.schema_invalid",
+                        task=task_name,
+                        error_count=exc.error_count(),
+                        errors=issues,
+                    )
+                    if attempt + 1 < attempts:
+                        payload["messages"] = base_messages + [
+                            {
+                                "role": "user",
+                                "content": _repair_instruction(
+                                    response_model,
+                                    issues,
+                                ),
+                            }
+                        ]
+                    raise
                 logger.info(
                     "deepseek.success",
                     task=task_name,

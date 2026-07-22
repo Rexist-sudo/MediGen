@@ -1,9 +1,10 @@
 .env
 .venv/
-__pycache__/
-*.py[cod]
+.runtime/
 .pytest_cache/
 .ruff_cache/
+**/__pycache__/
+*.py[cod]
 .coverage
 htmlcov/
-.runtime/
+tests/

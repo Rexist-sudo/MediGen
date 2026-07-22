@@ -5,7 +5,7 @@ from __future__ import annotations
 from enum import Enum
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import AliasChoices, BaseModel, Field, model_validator
 
 
 class DrugInteractionSeverity(str, Enum):
@@ -17,7 +17,9 @@ class DrugInteractionSeverity(str, Enum):
 
 
 class PrescribedMedication(BaseModel):
-    drug_name: str
+    drug_name: str = Field(
+        validation_alias=AliasChoices("drug_name", "name"),
+    )
     generic_name: str = ""
     dosage: str
     route: str = "oral"
@@ -31,8 +33,22 @@ class DrugInteraction(BaseModel):
     drug_a: str
     drug_b: str
     severity: DrugInteractionSeverity
-    description: str
-    recommendation: str
+    description: str = ""
+    recommendation: str = ""
+
+    @model_validator(mode="before")
+    @classmethod
+    def normalize_provider_fields(cls, value: object) -> object:
+        if not isinstance(value, dict):
+            return value
+        normalized = dict(value)
+        pair = normalized.get("drug_pair")
+        if isinstance(pair, list) and len(pair) >= 2:
+            normalized.setdefault("drug_a", pair[0])
+            normalized.setdefault("drug_b", pair[1])
+        if "description" not in normalized and "interaction" in normalized:
+            normalized["description"] = normalized["interaction"]
+        return normalized
 
 
 class TreatmentPlan(BaseModel):
