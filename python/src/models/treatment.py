@@ -1,7 +1,10 @@
 """Treatment plan data models."""
 
 from __future__ import annotations
+
 from enum import Enum
+from typing import Literal
+
 from pydantic import BaseModel, Field
 
 
@@ -62,21 +65,19 @@ class CodingResult(BaseModel):
     """ICD-10 coding and DRGs grouping output."""
     primary_icd10: ICD10Code
     secondary_icd10_codes: list[ICD10Code] = Field(default_factory=list)
-    drg_group: Optional[DRGGroup] = None
+    drg_group: DRGGroup | None = None
     coding_notes: str = ""
     coding_confidence: float = Field(ge=0.0, le=1.0, default=0.0)
 
 
 class AuditRecord(BaseModel):
-    """HIPAA audit trail record."""
+    """Ephemeral record created by the local prototype audit."""
+
     timestamp: str
-    user_id: str = "system"
     action: str
     resource_type: str
-    resource_id: str = ""
     detail: str = ""
     outcome: str = "success"
-    ip_address: str = ""
 
 
 class ComplianceCheck(BaseModel):
@@ -86,15 +87,13 @@ class ComplianceCheck(BaseModel):
 
 
 class AuditResult(BaseModel):
-    """Complete audit and compliance output."""
-    hipaa_compliant: bool = False
+    """Honest, deliberately limited prototype audit result."""
+
+    prototype_only: Literal[True] = True
+    demo_safe: bool = False
+    hipaa_compliant: Literal[False] = False
     compliance_checks: list[ComplianceCheck] = Field(default_factory=list)
     phi_fields_found: list[str] = Field(default_factory=list)
-    phi_fields_masked: list[str] = Field(default_factory=list)
     audit_trail: list[AuditRecord] = Field(default_factory=list)
     recommendations: list[str] = Field(default_factory=list)
-    overall_risk_level: str = "low"
-
-
-# Fix forward reference
-from typing import Optional  # noqa: E402
+    overall_risk_level: str = "unknown"

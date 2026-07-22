@@ -1,123 +1,84 @@
-"""
-Diagnosis Agent — Differential diagnosis based on structured patient data.
-
-Responsibilities:
-  - Analyze symptoms + lab results against medical knowledge
-  - Generate ranked differential diagnosis list with confidence scores
-  - Provide evidence chains for each candidate diagnosis
-  - Recommend additional tests if information is insufficient
-  - Integrates with GraphRAG knowledge graph when available
-"""
+"""Diagnosis node with an explicit information-gaps outcome."""
 
 from __future__ import annotations
-import json
-import structlog
-from langchain_core.messages import HumanMessage, SystemMessage
-from langchain_openai import ChatOpenAI
 
-from ..config.settings import get_settings
+import json
+
+import structlog
+
+from ..models.diagnosis import DiagnosisLLMOutput
+from ..services.deepseek_client import DeepSeekOutputError, get_json_client
 
 logger = structlog.get_logger(__name__)
 
-DIAGNOSIS_SYSTEM_PROMPT = """You are an expert diagnostician performing differential diagnosis. Given structured patient information, provide a comprehensive differential diagnosis.
-
-Return a JSON object with this structure:
+DIAGNOSIS_SYSTEM_PROMPT = """Analyze synthetic structured demo data only.
+Return ONLY one valid JSON object matching this shape:
 {
-  "primary_diagnosis": {
-    "disease_name": "most likely diagnosis",
-    "icd10_hint": "approximate ICD-10 code (e.g., J18.9)",
-    "confidence": 0.85,
-    "evidence": ["supporting finding 1", "supporting finding 2"],
-    "reasoning": "clinical reasoning explanation"
-  },
-  "differential_list": [
-    {
-      "disease_name": "alternative diagnosis",
-      "icd10_hint": "ICD-10 code",
-      "confidence": 0.6,
-      "evidence": ["evidence 1"],
-      "reasoning": "why this is considered"
-    }
-  ],
-  "recommended_tests": ["test 1 to confirm/rule out", "test 2"],
-  "clinical_notes": "overall clinical impression",
-  "knowledge_sources": ["source 1", "source 2"],
-  "needs_more_info": false
+  "primary_diagnosis": {"disease_name": "example", "icd10_hint": "R69", "confidence": 0.5, "evidence": [], "reasoning": "prototype-only reasoning"},
+  "differential_list": [],
+  "recommended_tests": [],
+  "clinical_notes": "prototype output; not for medical use",
+  "knowledge_sources": [],
+  "needs_more_info": false,
+  "information_gaps": []
 }
-
-Rules:
-- Confidence scores must be between 0 and 1.
-- Provide at least 2-3 differential diagnoses.
-- List evidence from the patient data that supports each diagnosis.
-- If critical information is missing, set needs_more_info to true.
-- Use standard medical terminology and ICD-10 code hints.
-- Return ONLY valid JSON, no markdown fences."""
+If information is insufficient, set primary_diagnosis to null,
+needs_more_info to true, and list concise information_gaps. Never invent missing
+patient facts. The output must be JSON with no markdown."""
 
 
 def diagnosis_agent(state) -> dict:
-    """
-    LangGraph node: Generate differential diagnosis from patient info.
-    Reads: state.patient_info
-    Writes: state.diagnosis, state.needs_more_info, state.current_agent
-    """
-    logger.info("diagnosis_agent.start")
+    """Create a diagnosis payload or a finite information-gaps result."""
 
-    patient_info = state.patient_info
-    if not patient_info:
+    logger.info("diagnosis.start")
+    if not state.patient_info:
         return {
             "diagnosis": None,
             "needs_more_info": True,
+            "information_gaps": state.information_gaps
+            + ["structured_patient_information_required"],
             "current_agent": "diagnosis",
-            "errors": state.errors + ["No patient info available for diagnosis"],
+            "errors": state.errors + ["Diagnosis skipped: patient_info_unavailable"],
         }
 
-    settings = get_settings()
-    llm = ChatOpenAI(
-        model=settings.openai_model,
-        api_key=settings.openai_api_key,
-        temperature=0.2,
+    patient_summary = json.dumps(
+        state.patient_info,
+        ensure_ascii=False,
+        separators=(",", ":"),
     )
-
-    patient_summary = json.dumps(patient_info, indent=2, ensure_ascii=False)
-
-    messages = [
-        SystemMessage(content=DIAGNOSIS_SYSTEM_PROMPT),
-        HumanMessage(
-            content=f"Patient information:\n\n{patient_summary}\n\nProvide your differential diagnosis."
-        ),
-    ]
-
     try:
-        response = llm.invoke(messages)
-        content = response.content.strip()
-        if content.startswith("```"):
-            content = content.split("\n", 1)[1].rsplit("```", 1)[0].strip()
-
-        diagnosis_data = json.loads(content)
-        needs_more = diagnosis_data.pop("needs_more_info", False)
-
-        logger.info(
-            "diagnosis_agent.success",
-            primary=diagnosis_data.get("primary_diagnosis", {}).get("disease_name"),
+        output = get_json_client().invoke_json(
+            task_name="diagnosis",
+            system_prompt=DIAGNOSIS_SYSTEM_PROMPT,
+            user_prompt=(
+                "Structured synthetic patient JSON:\n"
+                f"{patient_summary}\n"
+                "Return the requested diagnosis JSON only."
+            ),
+            response_model=DiagnosisLLMOutput,
         )
-        return {
-            "diagnosis": diagnosis_data,
-            "needs_more_info": needs_more,
-            "current_agent": "diagnosis",
-        }
-    except json.JSONDecodeError as e:
-        logger.error("diagnosis_agent.json_error", error=str(e))
+    except DeepSeekOutputError as exc:
+        logger.warning("diagnosis.output_unavailable", error_type=type(exc).__name__)
         return {
             "diagnosis": None,
-            "needs_more_info": False,
+            "needs_more_info": True,
+            "information_gaps": state.information_gaps
+            + ["diagnosis_structured_output_unavailable"],
             "current_agent": "diagnosis",
-            "errors": state.errors + [f"Diagnosis JSON parse error: {e}"],
+            "errors": state.errors + ["Diagnosis failed: DeepSeekOutputError"],
         }
-    except Exception as e:
-        logger.error("diagnosis_agent.error", error=str(e))
-        return {
-            "diagnosis": None,
-            "needs_more_info": False,
-            "current_agent": "diagnosis",
-            "errors": state.errors + [f"Diagnosis error: {e}"],
-        }
+
+    diagnosis_payload = output.model_dump(
+        mode="json",
+        exclude={"needs_more_info", "information_gaps"},
+    )
+    logger.info(
+        "diagnosis.success",
+        needs_more_info=output.needs_more_info,
+    )
+    return {
+        "diagnosis": diagnosis_payload,
+        "needs_more_info": output.needs_more_info,
+        "information_gaps": state.information_gaps + output.information_gaps,
+        "current_agent": "diagnosis",
+    }

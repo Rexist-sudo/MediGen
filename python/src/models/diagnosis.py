@@ -1,7 +1,7 @@
 """Diagnosis data models."""
 
 from __future__ import annotations
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 
 class DiagnosisCandidate(BaseModel):
@@ -20,3 +20,23 @@ class DifferentialDiagnosis(BaseModel):
     recommended_tests: list[str] = Field(default_factory=list)
     clinical_notes: str = ""
     knowledge_sources: list[str] = Field(default_factory=list)
+
+
+class DiagnosisLLMOutput(BaseModel):
+    """LLM response envelope that permits an information-gaps outcome."""
+
+    primary_diagnosis: DiagnosisCandidate | None = None
+    differential_list: list[DiagnosisCandidate] = Field(default_factory=list)
+    recommended_tests: list[str] = Field(default_factory=list)
+    clinical_notes: str = ""
+    knowledge_sources: list[str] = Field(default_factory=list)
+    needs_more_info: bool = False
+    information_gaps: list[str] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def validate_diagnosis_state(self) -> "DiagnosisLLMOutput":
+        if not self.needs_more_info and self.primary_diagnosis is None:
+            raise ValueError(
+                "primary_diagnosis is required when information is sufficient"
+            )
+        return self

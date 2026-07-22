@@ -1,117 +1,67 @@
-"""
-Intake Agent — Patient information collection and structuring.
-
-Responsibilities:
-  - Parse raw patient description into structured PatientInfo
-  - Extract chief complaint, symptoms, medical history
-  - Normalize data into FHIR-aligned format
-  - Validate completeness of critical fields
-"""
+"""Intake node for synthetic, de-identified prototype narratives."""
 
 from __future__ import annotations
-import json
-import structlog
-from langchain_core.messages import HumanMessage, SystemMessage
-from langchain_openai import ChatOpenAI
 
-from ..config.settings import get_settings
+import structlog
+
 from ..models.patient import PatientInfo
+from ..services.deepseek_client import DeepSeekOutputError, get_json_client
 
 logger = structlog.get_logger(__name__)
 
-INTAKE_SYSTEM_PROMPT = """You are an expert medical intake specialist. Your job is to extract structured patient information from the provided clinical narrative.
-
-Extract the following fields as a JSON object:
+INTAKE_SYSTEM_PROMPT = """You extract structured information from synthetic demo narratives.
+Return ONLY a valid JSON object matching this example:
 {
-  "name": "patient name or 'Unknown'",
-  "age": <integer>,
-  "gender": "male|female|other|unknown",
-  "chief_complaint": "main reason for visit",
-  "symptoms": [
-    {"name": "symptom name", "duration_days": <int or null>, "severity": "mild|moderate|severe|critical", "description": "details"}
-  ],
-  "medical_history": ["list of past conditions"],
-  "family_history": ["list of family conditions"],
-  "allergies": [
-    {"substance": "name", "reaction": "description", "severity": "mild|moderate|severe"}
-  ],
-  "current_medications": [
-    {"name": "drug name", "dosage": "dose", "frequency": "how often"}
-  ],
-  "vital_signs": {
-    "temperature": <float or null>,
-    "heart_rate": <int or null>,
-    "blood_pressure_systolic": <int or null>,
-    "blood_pressure_diastolic": <int or null>,
-    "respiratory_rate": <int or null>,
-    "oxygen_saturation": <float or null>
-  },
-  "lab_results": [
-    {"test_name": "name", "value": "result", "unit": "unit", "reference_range": "range", "is_abnormal": true/false}
-  ]
+  "patient_id": null,
+  "name": "Unknown",
+  "age": 56,
+  "gender": "unknown",
+  "chief_complaint": "fatigue",
+  "symptoms": [{"name": "fatigue", "duration_days": null, "severity": "moderate", "description": null}],
+  "medical_history": [],
+  "family_history": [],
+  "allergies": [],
+  "current_medications": [],
+  "vital_signs": null,
+  "lab_results": []
 }
-
-Rules:
-- If a field is not mentioned, use reasonable defaults or null.
-- Age must be a positive integer. If unclear, estimate from context.
-- Always identify the chief complaint even if not explicitly stated.
-- Return ONLY valid JSON, no markdown fences."""
+Use null for an unprovided age; never estimate it. Always use "Unknown" for name
+and null for patient_id. Use empty lists or null for missing fields. Do not extract
+direct identifiers. The output must be JSON and contain no markdown."""
 
 
 def intake_agent(state) -> dict:
-    """
-    LangGraph node: Parse raw patient input into structured data.
-    Reads: state.raw_input
-    Writes: state.patient_info, state.current_agent
-    """
-    logger.info("intake_agent.start", raw_input_len=len(state.raw_input or ""))
+    """Parse the raw narrative into the validated ``PatientInfo`` contract."""
 
-    raw = state.raw_input
-    if not raw:
+    raw = state.raw_input or ""
+    logger.info("intake.start", input_length=len(raw))
+    if not raw.strip():
         return {
             "patient_info": None,
             "current_agent": "intake",
-            "errors": state.errors + ["No raw input provided to Intake Agent"],
+            "information_gaps": state.information_gaps + ["patient_narrative_required"],
+            "errors": state.errors + ["Intake failed: missing_input"],
         }
-
-    settings = get_settings()
-    llm = ChatOpenAI(
-        model=settings.openai_model,
-        api_key=settings.openai_api_key,
-        temperature=0.1,
-    )
-
-    messages = [
-        SystemMessage(content=INTAKE_SYSTEM_PROMPT),
-        HumanMessage(content=f"Patient narrative:\n\n{raw}"),
-    ]
 
     try:
-        response = llm.invoke(messages)
-        content = response.content.strip()
-        if content.startswith("```"):
-            content = content.split("\n", 1)[1].rsplit("```", 1)[0].strip()
-
-        patient_data = json.loads(content)
-        patient = PatientInfo(**patient_data)
-        patient_dict = patient.model_dump(mode="json")
-
-        logger.info("intake_agent.success", patient_name=patient.name)
-        return {
-            "patient_info": patient_dict,
-            "current_agent": "intake",
-        }
-    except json.JSONDecodeError as e:
-        logger.error("intake_agent.json_error", error=str(e))
+        patient = get_json_client().invoke_json(
+            task_name="intake",
+            system_prompt=INTAKE_SYSTEM_PROMPT,
+            user_prompt=f"Patient narrative:\n\n{raw}\n\nReturn JSON only.",
+            response_model=PatientInfo,
+        )
+    except DeepSeekOutputError as exc:
+        logger.warning("intake.output_unavailable", error_type=type(exc).__name__)
         return {
             "patient_info": None,
             "current_agent": "intake",
-            "errors": state.errors + [f"Intake JSON parse error: {e}"],
+            "information_gaps": state.information_gaps
+            + ["intake_structured_output_unavailable"],
+            "errors": state.errors + ["Intake failed: DeepSeekOutputError"],
         }
-    except Exception as e:
-        logger.error("intake_agent.error", error=str(e))
-        return {
-            "patient_info": None,
-            "current_agent": "intake",
-            "errors": state.errors + [f"Intake error: {e}"],
-        }
+
+    logger.info("intake.success")
+    return {
+        "patient_info": patient.model_dump(mode="json"),
+        "current_agent": "intake",
+    }
