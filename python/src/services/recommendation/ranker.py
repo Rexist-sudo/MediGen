@@ -1,4 +1,4 @@
-"""Stable rule-based ranking behind the MiniOneRec-Lite-compatible contract."""
+"""Legacy rule-ranker oracle retained for baseline characterization tests."""
 
 from __future__ import annotations
 

@@ -1,0 +1,15 @@
+{
+  "case_id": "stemi_interaction",
+  "analysis_status": "completed",
+  "education_recommendations": {
+    "recommendation_status": "ok",
+    "strategy_used": "rule_v1_deepseek",
+    "candidate_source": "neo4j",
+    "candidate_count": 5,
+    "topic_ids": [
+      "myocardial_infarction_warning_signs",
+      "ecg_and_troponin_explanation",
+      "when_to_seek_urgent_help"
+    ]
+  }
+}

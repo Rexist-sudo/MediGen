@@ -1,0 +1,26 @@
+{
+  "cold_start": {
+    "inference_ms": 1927.951,
+    "topic_ids": [
+      "hba1c_test_explanation",
+      "diabetes_basics",
+      "follow_up_checklist"
+    ]
+  },
+  "device": "cuda",
+  "dtype": "bfloat16",
+  "history_case": {
+    "inference_ms": 845.909,
+    "topic_ids": [
+      "diabetes_basics",
+      "hba1c_test_explanation",
+      "follow_up_checklist"
+    ]
+  },
+  "load_ms": 33202.508,
+  "mode": "artifact",
+  "model_version": "minionerec-mvp-direct-sid-v1",
+  "offline": true,
+  "recorded_at": "2026-07-23T05:54:53.308582+00:00",
+  "status": "pass"
+}

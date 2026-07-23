@@ -162,18 +162,41 @@ def analyze_patient(req: AnalyzeRequest, request: Request) -> AnalyzeResponse:
 
     recommendation_started = perf_counter()
     if req.include_recommendations:
-        education = get_recommendation_service().recommend_after_analysis(
-            clinical_result=result,
-            user_preferences=req.user_preferences,
-            user_history_context=req.user_history_context,
-            top_k=req.recommendation_top_k,
-        )
+        try:
+            education = get_recommendation_service().recommend_after_analysis(
+                clinical_result=result,
+                user_preferences=req.user_preferences,
+                user_history_context=req.user_history_context,
+                top_k=req.recommendation_top_k,
+            )
+        except Exception as exc:
+            logger.warning(
+                "recommendation.route_isolation",
+                error_type=type(exc).__name__,
+            )
+            education = EducationRecommendationResult(
+                recommendation_status="degraded",
+                strategy_used="none",
+                ranking_strategy_used="none",
+                content_strategy_used="none",
+                warnings=["recommendation_unavailable"],
+            )
     else:
         education = EducationRecommendationResult(
             recommendation_status="disabled",
             strategy_used="none",
         )
     recommendation_elapsed = round(perf_counter() - recommendation_started, 3)
+    ranker_trace = {
+        "configured_strategy": settings.recommendation_ranker,
+        "used_strategy": education.ranking_strategy_used,
+        "model_version": education.model_version,
+        "model_ready": education.model_ready,
+        "fallback_reason": education.fallback_reason,
+        "inference_ms": education.ranker_inference_ms,
+        "candidate_count": education.candidate_count,
+        "valid_history_count": education.valid_history_count,
+    }
 
     if result.get("needs_more_info"):
         analysis_status = "needs_more_info"
@@ -242,6 +265,7 @@ def analyze_patient(req: AnalyzeRequest, request: Request) -> AnalyzeResponse:
             else {}
         )
         integration_trace = {
+            "recommendation_ranker": ranker_trace,
             "privacy_scan": {
                 "provider": "Presidio + local rules",
                 "result": "clear",
@@ -266,6 +290,7 @@ def analyze_patient(req: AnalyzeRequest, request: Request) -> AnalyzeResponse:
         }
     else:
         session_id = str(session_uuid)
+        integration_trace = {"recommendation_ranker": ranker_trace}
 
     stage_timings = {
         key: float(value)

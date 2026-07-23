@@ -1,0 +1,63 @@
+schema_version: 1
+seed: 42
+
+model:
+  base_model_id: Qwen/Qwen2.5-0.5B
+  base_model_revision: 060db6499f32faf8b98477b0a26969ef7d8b9987
+  local_base_model_path: ./artifacts/base-models/qwen2.5-0.5b
+  trust_remote_code: false
+  max_input_tokens: 1024
+
+tokens:
+  catalog_path: ./data/recommendation/knowledge_topics.jsonl
+  token_map_path: ./data/recommendation/topic_token_map.json
+
+data:
+  train_path: ./data/recommendation/synthetic/train.jsonl
+  validation_path: ./data/recommendation/synthetic/validation.jsonl
+  test_path: ./data/recommendation/synthetic/test.jsonl
+  manifest_path: ./data/recommendation/synthetic/data_manifest.json
+  task_mix:
+    next_topic: 0.8
+    topic_to_sid: 0.2
+
+lora:
+  rank: 8
+  alpha: 16
+  dropout: 0.05
+  target_modules:
+    - q_proj
+    - k_proj
+    - v_proj
+    - o_proj
+  modules_to_save:
+    - embed_tokens
+    - lm_head
+
+training:
+  output_dir: ./recommendation_model/runs/minionerec-mvp-v1
+  num_train_epochs: 3
+  learning_rate: 0.0002
+  weight_decay: 0.0
+  warmup_ratio: 0.03
+  per_device_train_batch_size: 4
+  per_device_eval_batch_size: 8
+  gradient_accumulation_steps: 2
+  gradient_checkpointing: true
+  logging_steps: 10
+  eval_strategy: epoch
+  save_strategy: epoch
+  save_total_limit: 2
+  load_best_model_at_end: true
+  metric_for_best_model: eval_loss
+  greater_is_better: false
+  max_steps: -1
+
+precision:
+  prefer_bf16: true
+  allow_fp16: true
+  cpu_fp32: true
+
+artifact:
+  model_version: minionerec-mvp-direct-sid-v1
+  output_dir: ./artifacts/minionerec-mvp/v1

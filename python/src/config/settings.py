@@ -36,6 +36,29 @@ class Settings(BaseSettings):
     )
     max_history_interactions: int = Field(default=20, ge=0, le=100)
     recommendation_generate_content: bool = True
+    recommendation_ranker: Literal["auto", "minionerec", "rule_v1"] = "auto"
+    recommendation_rule_fallback_enabled: bool = True
+
+    minionerec_enabled: bool = True
+    minionerec_model_version: str = "minionerec-mvp-direct-sid-v1"
+    minionerec_base_model_path: str = "./artifacts/base-models/qwen2.5-0.5b"
+    minionerec_artifact_path: str = "./artifacts/minionerec-mvp/v1"
+    minionerec_device: Literal["auto", "cuda", "cpu"] = "auto"
+    minionerec_dtype: Literal[
+        "auto",
+        "bfloat16",
+        "float16",
+        "float32",
+    ] = "auto"
+    minionerec_max_input_tokens: int = Field(default=1024, ge=128, le=4096)
+    minionerec_max_history: int = Field(default=20, ge=0, le=20)
+    minionerec_max_candidates: int = Field(default=20, ge=1, le=20)
+    minionerec_inference_concurrency: int = Field(default=1, ge=1, le=4)
+    minionerec_semaphore_wait_seconds: float = Field(default=1.0, ge=0, le=30)
+    minionerec_retry_cooldown_seconds: int = Field(default=60, ge=0, le=3600)
+    minionerec_load_policy: Literal["lazy", "eager"] = "lazy"
+    minionerec_readiness_strict: bool = False
+    minionerec_allow_cpu: bool = True
 
     # Input guard and infrastructure policy
     prototype_reject_obvious_phi: bool = True

@@ -12,6 +12,7 @@ import structlog
 from neo4j import GraphDatabase, RoutingControl
 
 from ..config.settings import get_settings
+from .recommendation.topic_store import TopicStore
 from .redis_service import RedisService, get_redis_service
 
 logger = structlog.get_logger(__name__)
@@ -65,10 +66,13 @@ def _load_topic_seed() -> list[dict[str, Any]]:
             if not raw.strip():
                 continue
             topic = json.loads(raw)
-            topic["status"] = "active"
             topic["source_url"] = topic.get("source_url") or ""
             topics.append(topic)
     return topics
+
+
+def _topic_catalog_hash_prefix() -> str:
+    return TopicStore.from_jsonl(_topic_path()).catalog_sha256()[:12]
 
 
 class GraphRAGService:
@@ -278,7 +282,8 @@ class GraphRAGService:
 
     def find_education_topics(self, context: dict[str, list[str]]) -> dict[str, Any]:
         normalized = {key: sorted({str(v).strip() for v in values if str(v).strip()}) for key, values in context.items()}
-        key = _cache_key("graph:topics", normalized)
+        namespace = f"graph:topics:v2:{_topic_catalog_hash_prefix()}"
+        key = _cache_key(namespace, normalized)
         if self.cache:
             cached = self.cache.get_json(key)
             if isinstance(cached, list):

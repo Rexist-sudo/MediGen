@@ -1,12 +1,13 @@
-"""Fault-isolated recommendation service executed after the clinical graph."""
+"""Fault-isolated recommendation orchestration after the clinical graph."""
 
 from __future__ import annotations
 
 import hashlib
 import json
+import re
+import threading
 from collections.abc import Callable
-from datetime import timezone
-from functools import cached_property, lru_cache
+from functools import lru_cache
 
 import structlog
 
@@ -17,118 +18,92 @@ from ...models.recommendation import (
     KnowledgeRecommendation,
     KnowledgeTopic,
     RecommendationContext,
-    TopicInteraction,
     UserHistoryContext,
     UserPreferenceContext,
 )
-from ..deepseek_client import (
-    DeepSeekOutputError,
-    JSONClient,
-    get_json_client,
-)
+from ..deepseek_client import DeepSeekOutputError, JSONClient, get_json_client
 from ..graphrag_service import GraphRAGService, get_graphrag_service
 from ..redis_service import RedisService, get_redis_service
-from .ranker import MatchSignals, RuleRecommendationRanker
+from .candidate_policy import CandidatePolicy
+from .card_renderer import CardRenderer
+from .context_builder import (
+    RecommendationContextBuilder,
+    build_recommendation_context,
+)
+from .history_normalizer import HistoryNormalizer
+from .minionerec_ranker import MiniOneRecRanker
+from .model_loader import MiniOneRecModelLoader, ModelReadiness
+from .output_validator import RecommendationOutputValidator
+from .ranker_protocol import (
+    InvalidModelOutputError,
+    RankerInput,
+    RankerResult,
+)
+from .ranker_router import RankerRouter
+from .rule_fallback_ranker import RuleFallbackRanker
 from .topic_store import TopicStore, resolve_topic_path
 
+
 logger = structlog.get_logger(__name__)
+UNSAFE_DYNAMIC_CONTENT = re.compile(
+    r"(?:\b\d+(?:\.\d+)?\s*(?:mg|g|ml|μg|mcg)\b|"
+    r"自行(?:停药|换药|加量|减量)|嚼服.{0,12}\d)",
+    re.IGNORECASE,
+)
 
 
-def _unique_strings(values: list[object]) -> list[str]:
-    result: list[str] = []
-    seen: set[str] = set()
-    for value in values:
-        if not isinstance(value, str):
-            continue
-        cleaned = value.strip()
-        key = cleaned.casefold()
-        if cleaned and key not in seen:
-            seen.add(key)
-            result.append(cleaned)
-    return result
-
-
-def _dict(value: object) -> dict:
-    return value if isinstance(value, dict) else {}
-
-
-def build_recommendation_context(clinical_result: dict) -> RecommendationContext:
-    diagnosis = _dict(clinical_result.get("diagnosis"))
-    primary = _dict(diagnosis.get("primary_diagnosis"))
-    differential = [
-        _dict(item)
-        for item in diagnosis.get("differential_list", [])
-        if isinstance(item, dict)
-    ]
-
-    coding = _dict(clinical_result.get("coding_result"))
-    primary_code = _dict(coding.get("primary_icd10"))
-    secondary_codes = [
-        _dict(item)
-        for item in coding.get("secondary_icd10_codes", [])
-        if isinstance(item, dict)
-    ]
-
-    treatment = _dict(clinical_result.get("treatment_plan"))
-    medications = [
-        _dict(item)
-        for item in treatment.get("medications", [])
-        if isinstance(item, dict)
-    ]
-    audit = _dict(clinical_result.get("audit_result"))
-
-    return RecommendationContext(
-        diagnosis_terms=_unique_strings(
-            [primary.get("disease_name")]
-            + [item.get("disease_name") for item in differential]
-        ),
-        diagnosis_codes=_unique_strings(
-            [primary_code.get("code")]
-            + [item.get("code") for item in secondary_codes]
-        ),
-        recommended_tests=_unique_strings(diagnosis.get("recommended_tests", [])),
-        medication_names=_unique_strings(
-            [
-                name
-                for medication in medications
-                for name in (
-                    medication.get("generic_name"),
-                    medication.get("drug_name"),
-                )
-            ]
-        ),
-        demo_safe=bool(audit.get("demo_safe", False)),
-    )
+def _compatibility_strategy(ranking: str, content: str) -> str:
+    if ranking == "mini_onerec_mvp":
+        return (
+            "mini_onerec_mvp_deepseek"
+            if content == "deepseek_generated"
+            else "mini_onerec_mvp"
+        )
+    if ranking == "rule_v1_fallback":
+        return (
+            "rule_v1_fallback_deepseek"
+            if content == "deepseek_generated"
+            else "rule_v1_fallback"
+        )
+    return "none"
 
 
 class RecommendationService:
     def __init__(
         self,
         *,
-        topic_path: str,
-        ranker: RuleRecommendationRanker,
+        topic_store: TopicStore,
+        ranker_router: RankerRouter,
         enabled: bool,
-        max_history_interactions: int = 20,
+        max_candidates: int,
+        context_builder: RecommendationContextBuilder | None = None,
+        history_normalizer: HistoryNormalizer | None = None,
+        candidate_policy: CandidatePolicy | None = None,
+        output_validator: RecommendationOutputValidator | None = None,
+        card_renderer: CardRenderer | None = None,
         topic_provider: GraphRAGService | None = None,
         content_client_factory: Callable[[], JSONClient] | None = None,
         cache: RedisService | None = None,
         generate_content: bool = False,
     ):
-        self.topic_path = topic_path
-        self.ranker = ranker
+        self.topic_store = topic_store
+        self.ranker_router = ranker_router
         self.enabled = enabled
-        self.max_history_interactions = max(
-            0,
-            min(20, max_history_interactions),
+        self.max_candidates = max_candidates
+        self.context_builder = context_builder or RecommendationContextBuilder()
+        self.history_normalizer = history_normalizer or HistoryNormalizer(
+            topic_store,
+            20,
         )
+        self.candidate_policy = candidate_policy or CandidatePolicy(topic_store)
+        self.output_validator = output_validator or RecommendationOutputValidator(
+            topic_store
+        )
+        self.card_renderer = card_renderer or CardRenderer()
         self.topic_provider = topic_provider
         self.content_client_factory = content_client_factory
         self.cache = cache
         self.generate_content = generate_content
-
-    @cached_property
-    def topic_store(self) -> TopicStore:
-        return TopicStore.from_jsonl(self.topic_path)
 
     def is_store_ready(self) -> bool:
         try:
@@ -143,6 +118,9 @@ class RecommendationService:
             )
             return False
 
+    def model_readiness(self, *, load: bool = False) -> ModelReadiness:
+        return self.ranker_router.readiness(load=load)
+
     def recommend_after_analysis(
         self,
         *,
@@ -155,61 +133,85 @@ class RecommendationService:
             return EducationRecommendationResult(
                 recommendation_status="disabled",
                 strategy_used="none",
+                ranking_strategy_used="none",
+                content_strategy_used="none",
             )
 
+        top_k = max(1, min(3, top_k))
         try:
             warnings: list[str] = []
-            preferences = self._normalize_preferences(user_preferences, warnings)
-            context = build_recommendation_context(clinical_result)
-            topics, candidate_source, candidate_cache_status = self._candidate_topics(
-                context,
+            preferences = self._normalize_preferences(
+                user_preferences,
                 warnings,
             )
-            history = self._normalize_history(
-                user_history_context,
-                topics,
-                warnings,
+            context = self.context_builder.build(clinical_result)
+            recalled, candidate_source, candidate_cache_status = (
+                self._candidate_topics(context, warnings)
             )
-            audit_present = isinstance(clinical_result.get("audit_result"), dict)
-            degraded_for_audit = audit_present and not context.demo_safe
-            if not audit_present:
-                warnings.append("audit_result_missing")
-            elif degraded_for_audit:
-                warnings.append("audit_not_demo_safe")
-                topics = [
-                    topic
-                    for topic in topics
-                    if topic.mandatory_safety or topic.general_fallback
-                ]
-
-            ranking = self.ranker.rank_detailed(
+            history = self.history_normalizer.normalize(user_history_context)
+            policy = self.candidate_policy.apply(
                 context=context,
-                topics=topics,
                 preferences=preferences,
                 history=history,
-                top_k=max(1, min(3, top_k)),
+                recalled_topics=recalled,
+                all_active_topics=self.topic_store.list_active(),
+                top_k=top_k,
+                max_candidates=self.max_candidates,
             )
-            if ranking.safety_overrides:
-                warnings.append("mandatory_safety_override")
-            if not ranking.topics:
-                warnings.append("no_recommendation_candidates")
-
-            recommendations = [
-                self._render(
-                    topic=topic,
-                    rank=index,
-                    signals=ranking.signals_by_topic.get(
-                        topic.topic_id,
-                        MatchSignals(),
-                    ),
-                    preferences=preferences,
-                    history=history,
-                    topics=topics,
+            warnings.extend(policy.warnings)
+            remaining_slots = max(0, top_k - len(policy.pinned_topics))
+            ranker_input = RankerInput(
+                context=context,
+                preferences=preferences,
+                history=history,
+                candidates=policy.rankable_topics,
+                already_selected_topic_ids=tuple(
+                    topic.topic_id for topic in policy.pinned_topics
+                ),
+                top_k=remaining_slots,
+            )
+            if remaining_slots and policy.rankable_topics:
+                ranker_result = self.ranker_router.rank(ranker_input)
+            else:
+                reason = None
+                if not context.demo_safe:
+                    reason = "unsafe_context"
+                elif remaining_slots and not policy.rankable_topics:
+                    reason = "no_rankable_candidates"
+                ranker_result = RankerResult(
+                    topic_ids=(),
+                    strategy_used="none",
+                    fallback_reason=reason,
                 )
-                for index, topic in enumerate(ranking.topics, start=1)
-            ]
-            strategy = "rule_v1"
+            try:
+                selected = self.output_validator.validate(
+                    ranker_result=ranker_result,
+                    policy_result=policy,
+                    top_k=top_k,
+                )
+            except InvalidModelOutputError:
+                ranker_result = self.ranker_router.rank_fallback(
+                    ranker_input,
+                    reason="invalid_model_output",
+                )
+                selected = self.output_validator.validate(
+                    ranker_result=ranker_result,
+                    policy_result=policy,
+                    top_k=top_k,
+                )
+
+            warnings.extend(ranker_result.warnings)
+            if not selected:
+                warnings.append("no_recommendation_candidates")
+            recommendations = self.card_renderer.render(
+                topics=selected,
+                signals_by_topic_id=policy.signals_by_topic_id,
+                preferences=preferences,
+                history=history,
+            )
+            content_strategy = "catalog_fallback" if recommendations else "none"
             content_cache_status = "none"
+            content_failed = False
             if (
                 recommendations
                 and self.generate_content
@@ -225,7 +227,7 @@ class RecommendationService:
                             else "beginner"
                         ),
                     )
-                    strategy = "rule_v1_deepseek"
+                    content_strategy = "deepseek_generated"
                 except Exception as exc:
                     logger.warning(
                         "recommendation.content_generation_failed",
@@ -233,25 +235,60 @@ class RecommendationService:
                     )
                     warnings.append("education_content_generation_fallback")
                     content_cache_status = "fallback"
+                    content_failed = True
+
+            readiness = self.model_readiness(load=False)
+            ranking_strategy = (
+                ranker_result.strategy_used
+                if ranker_result.strategy_used
+                in {"mini_onerec_mvp", "rule_v1_fallback"}
+                else "none"
+            )
+            fallback_reason = ranker_result.fallback_reason
+            degraded = bool(
+                fallback_reason
+                or not context.demo_safe
+                or content_failed
+            )
+            model_ready = (
+                ranking_strategy == "mini_onerec_mvp"
+                or (readiness.artifact_valid and readiness.loaded)
+            )
             logger.info(
                 "recommendation.success",
-                candidate_count=ranking.candidate_count,
+                candidate_count=(
+                    len(policy.pinned_topics) + len(policy.rankable_topics)
+                ),
                 result_count=len(recommendations),
-                status="degraded" if degraded_for_audit else "ok",
+                ranking_strategy=ranking_strategy,
+                fallback_reason=fallback_reason,
+                history_count=history.valid_count,
+                inference_ms=ranker_result.inference_ms,
             )
             return EducationRecommendationResult(
-                recommendation_status=(
-                    "degraded" if degraded_for_audit else "ok"
+                recommendation_status="degraded" if degraded else "ok",
+                strategy_used=_compatibility_strategy(
+                    ranking_strategy,
+                    content_strategy,
                 ),
-                strategy_used=strategy,
+                ranking_strategy_used=ranking_strategy,
+                content_strategy_used=content_strategy,
+                model_version=(
+                    ranker_result.model_version or readiness.model_version
+                ),
+                model_ready=model_ready,
+                fallback_reason=fallback_reason,
+                ranker_inference_ms=ranker_result.inference_ms,
                 candidate_source=candidate_source,
                 candidate_cache_status=candidate_cache_status,
                 content_cache_status=content_cache_status,
-                history_used=bool(history),
-                valid_history_count=len(history),
-                candidate_count=ranking.candidate_count,
+                history_used=bool(history.interactions),
+                valid_history_count=history.valid_count,
+                candidate_count=(
+                    len(policy.pinned_topics) + len(policy.rankable_topics)
+                ),
                 recommendations=recommendations,
-                warnings=warnings,
+                warnings=list(dict.fromkeys(warnings)),
             )
         except Exception as exc:
             logger.warning(
@@ -261,6 +298,8 @@ class RecommendationService:
             return EducationRecommendationResult(
                 recommendation_status="degraded",
                 strategy_used="none",
+                ranking_strategy_used="none",
+                content_strategy_used="none",
                 warnings=["recommendation_unavailable"],
             )
 
@@ -275,9 +314,20 @@ class RecommendationService:
             result = self.topic_provider.find_education_topics(
                 context.model_dump(mode="json", exclude={"demo_safe"})
             )
-            topics = [KnowledgeTopic.model_validate(item) for item in result["topics"]]
+            topics: list[KnowledgeTopic] = []
+            seen: set[str] = set()
+            for raw in result.get("topics", []):
+                if not isinstance(raw, dict):
+                    continue
+                topic_id = raw.get("topic_id")
+                if not isinstance(topic_id, str) or topic_id in seen:
+                    continue
+                topic = self.topic_store.get_by_id(topic_id)
+                if topic is not None:
+                    topics.append(topic)
+                    seen.add(topic_id)
             if topics:
-                return topics, "neo4j", result["cache_status"]
+                return topics, "neo4j", str(result.get("cache_status", "miss"))
             warnings.append("knowledge_graph_candidates_empty")
         except Exception as exc:
             logger.warning(
@@ -307,7 +357,7 @@ class RecommendationService:
                 separators=(",", ":"),
             ).encode("utf-8")
         ).hexdigest()
-        cache_key = f"medigen:education:{digest}"
+        cache_key = f"medigen:education:v2:{digest}"
         generated_payload = self.cache.get_json(cache_key) if self.cache else None
         cache_status = "hit" if isinstance(generated_payload, dict) else "miss"
 
@@ -315,19 +365,22 @@ class RecommendationService:
             generated = GeneratedEducationContent.model_validate(generated_payload)
         else:
             depth_instruction = (
-                "Use plain language, define clinical terms, and keep each card between 100 and 180 Chinese characters."
+                "Use plain language, define clinical terms, and keep each card "
+                "between 100 and 180 Chinese characters."
                 if depth == "beginner"
-                else "Use clinically precise language with mechanisms, interpretation boundaries, and practical follow-up points; keep each card between 220 and 420 Chinese characters."
+                else "Use clinically precise language with mechanisms, interpretation "
+                "boundaries, and practical follow-up points; keep each card between "
+                "220 and 420 Chinese characters."
             )
             generated = self.content_client_factory().invoke_json(
                 task_name="education_content",
                 system_prompt=(
-                    "Generate Chinese patient-education card content for the exact candidate topics supplied. "
-                    "Return JSON only with shape {\"cards\":[{\"topic_id\":\"...\",\"summary\":\"...\"}]}. "
-                    "Keep every topic_id unchanged and return one card per supplied topic. "
-                    "Use only the bounded clinical context and general medical knowledge. Do not diagnose, prescribe, "
-                    "specify individualized doses, or add patient facts. Use direct, clear system copy without "
-                    "development-stage terminology or contrastive '不是...而是' phrasing. "
+                    "Generate Chinese educational text for the exact reviewed topics. "
+                    "Return JSON with shape {\"cards\":[{\"topic_id\":\"...\","
+                    "\"summary\":\"...\"}]}. Keep every topic_id unchanged and "
+                    "return one card per supplied topic. Do not diagnose, prescribe, "
+                    "name an individualized dose, direct medication changes, or add "
+                    "patient facts. "
                     + depth_instruction
                 ),
                 user_prompt=json.dumps(
@@ -357,6 +410,8 @@ class RecommendationService:
         expected = {item.topic_id for item in recommendations}
         if not expected.issubset(by_topic):
             raise DeepSeekOutputError("generated education cards are incomplete")
+        if any(UNSAFE_DYNAMIC_CONTENT.search(by_topic[item]) for item in expected):
+            raise DeepSeekOutputError("generated education content failed safety policy")
         depth_label = "入门" if depth == "beginner" else "标准"
         return [
             item.model_copy(
@@ -391,106 +446,39 @@ class RecommendationService:
             }
         )
 
-    def _normalize_history(
-        self,
-        history_context: UserHistoryContext | None,
-        topics: list[KnowledgeTopic],
-        warnings: list[str],
-    ) -> list[TopicInteraction]:
-        interactions = list(history_context.interactions if history_context else [])
-        valid_topic_ids = {topic.topic_id for topic in topics}
-        valid: list[TopicInteraction] = []
-        unknown_found = False
-        for interaction in interactions:
-            if interaction.topic_id not in valid_topic_ids:
-                unknown_found = True
-                continue
-            valid.append(interaction)
-        if unknown_found:
-            warnings.append("unknown_history_topic_ignored")
-
-        if any(item.occurred_at is not None for item in valid):
-            indexed = list(enumerate(valid))
-
-            def time_key(item: tuple[int, TopicInteraction]) -> tuple[float, int]:
-                index, interaction = item
-                occurred_at = interaction.occurred_at
-                if occurred_at is None:
-                    return (float("-inf"), index)
-                if occurred_at.tzinfo is None:
-                    occurred_at = occurred_at.replace(tzinfo=timezone.utc)
-                return (occurred_at.timestamp(), index)
-
-            valid = [item for _, item in sorted(indexed, key=time_key)]
-
-        if self.max_history_interactions == 0:
-            return []
-        return valid[-self.max_history_interactions :]
-
-    @staticmethod
-    def _render(
-        *,
-        topic: KnowledgeTopic,
-        rank: int,
-        signals: MatchSignals,
-        preferences: UserPreferenceContext | None,
-        history: list[TopicInteraction],
-        topics: list[KnowledgeTopic],
-    ) -> KnowledgeRecommendation:
-        helpful_categories = {
-            next(
-                (
-                    candidate.category
-                    for candidate in topics
-                    if candidate.topic_id == interaction.topic_id
-                ),
-                None,
-            )
-            for interaction in history
-            if interaction.event_type in {"helpful", "save"}
-        }
-        if topic.mandatory_safety and signals.strong_safety:
-            reason = "这是与当前上下文相关的安全提醒主题。"
-        elif topic.category in helpful_categories and not any(
-            item.topic_id == topic.topic_id for item in history
-        ):
-            reason = "你曾对同类内容标记为有帮助，因此优先展示该未阅读主题。"
-        elif signals.test:
-            reason = "该主题与当前建议检查相关。"
-        elif signals.code or signals.diagnosis:
-            reason = "该主题与当前诊断类别相关。"
-        else:
-            reason = "该主题与当前结果中的健康教育需求相关。"
-
-        preference_matches: list[str] = []
-        if preferences and preferences.preferred_depth == topic.depth:
-            preference_matches.append("阅读深度")
-        if preferences and preferences.preferred_format == topic.format:
-            preference_matches.append("内容格式")
-        if preference_matches:
-            reason = reason.rstrip("。") + "，并符合你的" + "和".join(preference_matches) + "偏好。"
-
-        return KnowledgeRecommendation(
-            rank=rank,
-            topic_id=topic.topic_id,
-            title=topic.title,
-            category=topic.category,
-            reason=reason,
-            summary=topic.summary,
-            source_label=topic.source_label,
-            source_url=topic.source_url,
-            safety_note=topic.safety_note,
-        )
-
 
 @lru_cache(maxsize=1)
 def get_recommendation_service() -> RecommendationService:
     settings = get_settings()
+    store = TopicStore.from_jsonl(
+        resolve_topic_path(settings.recommendation_topic_path)
+    )
+    loader = MiniOneRecModelLoader(settings=settings, topic_store=store)
+    fallback = RuleFallbackRanker(store)
+    primary = MiniOneRecRanker(
+        model_loader=loader,
+        topic_store=store,
+        inference_semaphore=threading.Semaphore(
+            settings.minionerec_inference_concurrency
+        ),
+        semaphore_wait_seconds=settings.minionerec_semaphore_wait_seconds,
+        max_input_tokens=settings.minionerec_max_input_tokens,
+    )
+    router = RankerRouter(
+        primary=primary,
+        fallback=fallback,
+        settings=settings,
+        model_loader=loader,
+    )
     return RecommendationService(
-        topic_path=str(resolve_topic_path(settings.recommendation_topic_path)),
-        ranker=RuleRecommendationRanker(),
+        topic_store=store,
+        ranker_router=router,
         enabled=settings.recommendation_enabled,
-        max_history_interactions=settings.max_history_interactions,
+        max_candidates=settings.minionerec_max_candidates,
+        history_normalizer=HistoryNormalizer(
+            store,
+            settings.minionerec_max_history,
+        ),
         topic_provider=get_graphrag_service(),
         content_client_factory=(
             get_json_client
@@ -499,12 +487,17 @@ def get_recommendation_service() -> RecommendationService:
             else None
         ),
         cache=(
-            get_redis_service()
-            if settings.llm_backend == "deepseek"
-            else None
+            get_redis_service() if settings.llm_backend == "deepseek" else None
         ),
         generate_content=(
             settings.llm_backend == "deepseek"
             and settings.recommendation_generate_content
         ),
     )
+
+
+__all__ = [
+    "RecommendationService",
+    "build_recommendation_context",
+    "get_recommendation_service",
+]

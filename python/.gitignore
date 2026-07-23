@@ -1,9 +1,37 @@
+# Secrets and local environments
 .env
 .venv/
+.venv-minionerec/
+.venv-train/
+
+# Python, test and coverage caches
 __pycache__/
 *.py[cod]
 .pytest_cache/
 .ruff_cache/
 .coverage
 htmlcov/
+
+# Local services, logs and validation transcripts
 .runtime/
+*.log
+*.pid
+
+# Downloaded foundation models and packaged model binaries
+artifacts/base-models/
+artifacts/**/.cache/
+artifacts/minionerec-mvp/*/tokenizer/
+artifacts/**/*.safetensors
+artifacts/**/*.bin
+artifacts/**/*.pt
+artifacts/**/*.pth
+artifacts/**/*.ckpt
+artifacts/**/*.onnx
+
+# Trainer checkpoints and experiment trackers
+recommendation_model/runs/
+recommendation_model/checkpoints/
+recommendation_model/**/checkpoint-*/
+recommendation_model/wandb/
+recommendation_model/tensorboard/
+recommendation_model/logs/

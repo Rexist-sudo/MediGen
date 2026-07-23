@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import re
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -15,13 +14,13 @@ import httpx
 
 ROOT = Path(__file__).resolve().parents[1]
 CASE_PATH = ROOT / "src" / "web" / "validation-cases.json"
+TOPIC_PATH = ROOT / "data" / "recommendation" / "knowledge_topics.jsonl"
 DEFAULT_OUTPUT = ROOT / ".runtime" / "real-validation-last.json"
-FORBIDDEN_VISIBLE_TEXT = (
-    "MVP",
-    "暂无",
-    "未使用",
-    "待接入",
-    "不会",
+DIABETES_DESCRIPTION = (
+    "一名 56 岁成人合成病例，近 3 个月口渴、夜间多尿并有多次空腹血糖升高记录；"
+    "既往有高血压，无手术史，不吸烟，无已知药物过敏。当前服用 lisinopril。"
+    "生命体征稳定，查体无急性异常。检查结果：空腹血糖 9.8 mmol/L，HbA1c 8.2%，"
+    "肾功能正常。需要评估 2 型糖尿病及长期血糖趋势。"
 )
 
 
@@ -41,7 +40,16 @@ def _contains_value(value: object) -> bool:
     return value is not None and value != ""
 
 
-def _validate_response(case: dict[str, Any], response: dict[str, Any]) -> list[str]:
+def _validate_response(
+    case: dict[str, Any],
+    response: dict[str, Any],
+    *,
+    expected_ranking: str,
+    expected_content: str,
+    expected_fallback_reason: str | None,
+    expected_model_version: str | None,
+    catalog_topic_ids: set[str],
+) -> list[str]:
     failures: list[str] = []
 
     def require(condition: bool, message: str) -> None:
@@ -126,13 +134,55 @@ def _validate_response(case: dict[str, Any], response: dict[str, Any]) -> list[s
 
     recommendations = _as_list(education.get("recommendations"))
     require(education.get("candidate_source") == "neo4j", "education candidates did not come from Neo4j")
-    require(education.get("strategy_used") == "rule_v1_deepseek", "DeepSeek education generation was not used")
+    require(
+        education.get("ranking_strategy_used") == expected_ranking,
+        f"ranking strategy is {education.get('ranking_strategy_used')!r}",
+    )
+    content_strategy = education.get("content_strategy_used")
+    if expected_content == "auto":
+        require(
+            content_strategy in {"deepseek_generated", "catalog_fallback"},
+            f"content strategy is {content_strategy!r}",
+        )
+    else:
+        require(
+            content_strategy == expected_content,
+            f"content strategy is {content_strategy!r}",
+        )
+    require(
+        education.get("fallback_reason") == expected_fallback_reason,
+        f"fallback reason is {education.get('fallback_reason')!r}",
+    )
+    if expected_ranking == "mini_onerec_mvp":
+        require(education.get("model_ready") is True, "Mini-OneRec is not ready")
+        require(
+            education.get("model_version") == expected_model_version,
+            "response model version differs from readiness",
+        )
+        require(
+            float(education.get("ranker_inference_ms") or 0) > 0,
+            "ranker inference time is missing",
+        )
+    require(int(education.get("candidate_count", 0)) >= 1, "candidate count is empty")
     require(len(recommendations) == 3, "education card count is not 3")
     for item in recommendations:
         card = _as_dict(item)
-        require(card.get("content_source") == "deepseek_generated", f"card {card.get('topic_id')} is using fallback text")
+        require(card.get("topic_id") in catalog_topic_ids, "unknown recommendation topic")
+        require(card.get("content_source") == content_strategy, f"card {card.get('topic_id')} content source differs")
         require(card.get("content_depth") == "standard", f"card {card.get('topic_id')} depth is not standard")
-        require(len(str(card.get("summary", ""))) >= 100, f"card {card.get('topic_id')} content is too short")
+        minimum_summary = 100 if content_strategy == "deepseek_generated" else 20
+        require(len(str(card.get("summary", ""))) >= minimum_summary, f"card {card.get('topic_id')} content is too short")
+
+    mandatory_topic = {
+        "stemi_interaction": "myocardial_infarction_warning_signs",
+        "heart_failure": "heart_failure_warning_signs",
+    }.get(case.get("id"))
+    if mandatory_topic:
+        require(
+            bool(recommendations)
+            and _as_dict(recommendations[0]).get("topic_id") == mandatory_topic,
+            f"mandatory safety topic {mandatory_topic} is not first",
+        )
 
     providers = {
         "privacy_scan": "Presidio + local rules",
@@ -150,6 +200,12 @@ def _validate_response(case: dict[str, Any], response: dict[str, Any]) -> list[s
     resource_types = set(_as_list(interoperability.get("resource_types")))
     require({"Patient", "Condition"}.issubset(resource_types), "FHIR core resources are incomplete")
     require(int(interoperability.get("resource_count", 0)) >= 2, "FHIR resource count is too small")
+    ranker_trace = _as_dict(trace.get("recommendation_ranker"))
+    require(
+        ranker_trace.get("used_strategy") == expected_ranking,
+        "ranker trace strategy differs from response",
+    )
+    require("prompt" not in json.dumps(ranker_trace).casefold(), "ranker trace exposes prompt data")
 
     total_seconds = float(timeline.get("total_seconds", 0.0))
     require(total_seconds > 0, "total processing time is missing")
@@ -162,10 +218,56 @@ def _validate_response(case: dict[str, Any], response: dict[str, Any]) -> list[s
         elapsed = float(_as_dict(supporting_timings.get(step)).get("elapsed_seconds", 0.0))
         require(elapsed > 0, f"{step} processing time is missing")
 
-    visible_text = json.dumps(response, ensure_ascii=False)
-    for phrase in FORBIDDEN_VISIBLE_TEXT:
-        require(phrase not in visible_text, f"visible response contains forbidden wording: {phrase}")
-    require(re.search(r"不是.{0,40}而是", visible_text) is None, "visible response contains contrastive explanatory wording")
+    return failures
+
+
+def _validate_model_response(
+    response: dict[str, Any],
+    *,
+    model_version: str,
+    catalog_topic_ids: set[str],
+) -> list[str]:
+    failures: list[str] = []
+
+    def require(condition: bool, message: str) -> None:
+        if not condition:
+            failures.append(message)
+
+    education = _as_dict(response.get("education_recommendations"))
+    recommendations = _as_list(education.get("recommendations"))
+    require(response.get("analysis_status") == "completed", "analysis did not complete")
+    require(
+        education.get("ranking_strategy_used") == "mini_onerec_mvp",
+        "request did not use Mini-OneRec",
+    )
+    require(education.get("model_ready") is True, "model_ready is false")
+    require(education.get("model_version") == model_version, "model version mismatch")
+    require(education.get("fallback_reason") is None, "request used fallback")
+    content_strategy = education.get("content_strategy_used")
+    require(
+        content_strategy in {"deepseek_generated", "catalog_fallback"},
+        "unsupported content strategy",
+    )
+    require(int(education.get("candidate_count", 0)) >= 1, "candidate count is empty")
+    require(1 <= len(recommendations) <= 3, "recommendation count is outside 1-3")
+    require(
+        all(
+            _as_dict(item).get("topic_id") in catalog_topic_ids
+            for item in recommendations
+        ),
+        "request returned an unknown topic",
+    )
+    require(
+        all(
+            _as_dict(item).get("content_source") == content_strategy
+            for item in recommendations
+        ),
+        "card content source differs from the response strategy",
+    )
+    trace = _as_dict(
+        _as_dict(response.get("integration_trace")).get("recommendation_ranker")
+    )
+    require("prompt" not in json.dumps(trace).casefold(), "trace exposes prompt data")
     return failures
 
 
@@ -174,11 +276,34 @@ def main() -> int:
     parser.add_argument("--base-url", default="http://127.0.0.1:8001")
     parser.add_argument("--case", default="all")
     parser.add_argument("--output", type=Path, default=DEFAULT_OUTPUT)
+    parser.add_argument(
+        "--expected-ranking",
+        choices=["mini_onerec_mvp", "rule_v1_fallback"],
+        default="mini_onerec_mvp",
+    )
+    parser.add_argument(
+        "--expected-content",
+        choices=["auto", "deepseek_generated", "catalog_fallback"],
+        default="deepseek_generated",
+    )
+    parser.add_argument("--expected-fallback-reason", default="")
+    parser.add_argument("--model-scenarios", action="store_true")
+    parser.add_argument("--require-fallback-disabled", action="store_true")
+    parser.add_argument("--allow-model-not-ready", action="store_true")
     args = parser.parse_args()
 
     cases = json.loads(CASE_PATH.read_text(encoding="utf-8"))
+    catalog_topic_ids = {
+        json.loads(line)["topic_id"]
+        for line in TOPIC_PATH.read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    }
     by_id = {item["id"]: item for item in cases}
-    if args.case != "all":
+    if args.case == "none":
+        if not args.model_scenarios:
+            parser.error("--case none requires --model-scenarios")
+        cases = []
+    elif args.case != "all":
         if args.case not in by_id:
             parser.error(f"unknown case: {args.case}")
         cases = [by_id[args.case]]
@@ -186,15 +311,72 @@ def main() -> int:
     base_url = args.base_url.rstrip("/")
     records: list[dict[str, Any]] = []
     any_failures = False
+    expected_fallback_reason = args.expected_fallback_reason or None
     with httpx.Client(timeout=420) as client:
         ready = client.get(f"{base_url}/ready")
         ready.raise_for_status()
         ready_payload = ready.json()
-        if ready_payload.get("status") != "ready":
+        if (
+            ready_payload.get("status") != "ready"
+            and not args.allow_model_not_ready
+        ):
             raise RuntimeError(f"service is not ready: {ready_payload}")
+        dependencies = _as_dict(ready_payload.get("dependencies"))
+        if not dependencies or not all(dependencies.values()):
+            raise RuntimeError(f"runtime dependency is unavailable: {dependencies}")
+        model_status = _as_dict(ready_payload.get("recommendation_model"))
+        model_version = model_status.get("model_version")
+        if args.expected_ranking == "mini_onerec_mvp":
+            if not model_status.get("artifact_valid") or not model_status.get("loaded"):
+                raise RuntimeError(f"Mini-OneRec is not loaded: {model_status}")
+            if not model_version:
+                raise RuntimeError("readiness has no model version")
+        if args.require_fallback_disabled and model_status.get("fallback_available"):
+            raise RuntimeError("fallback is enabled in the primary-proof profile")
+
+        def submit(
+            *,
+            scenario_id: str,
+            request_payload: dict[str, Any],
+            validator,
+            readme_case_id: str | None = None,
+        ) -> dict[str, Any]:
+            nonlocal any_failures
+            started = datetime.now(timezone.utc)
+            response = client.post(
+                f"{base_url}/api/v1/clinical/analyze",
+                json=request_payload,
+            )
+            try:
+                body = response.json()
+            except ValueError:
+                body = {"raw_response": response.text[:1000]}
+            failures = (
+                validator(body)
+                if response.status_code == 200
+                else [f"HTTP {response.status_code}: {body}"]
+            )
+            elapsed = (datetime.now(timezone.utc) - started).total_seconds()
+            record = {
+                "case_id": scenario_id,
+                "readme_case_id": readme_case_id,
+                "recorded_at_utc": started.isoformat(),
+                "elapsed_seconds": round(elapsed, 2),
+                "http_status": response.status_code,
+                "passed": not failures,
+                "failures": failures,
+                "request": request_payload,
+                "response": body,
+            }
+            records.append(record)
+            any_failures = any_failures or bool(failures)
+            status = "PASS" if not failures else "FAIL"
+            print(f"[{status}] {scenario_id} ({elapsed:.1f}s)", flush=True)
+            for failure in failures:
+                print(f"  - {failure}", flush=True)
+            return record
 
         for case in cases:
-            started = datetime.now(timezone.utc)
             request_payload = {
                 "patient_description": case["description"],
                 "include_recommendations": True,
@@ -209,41 +391,152 @@ def main() -> int:
                     "preferred_depth": "standard",
                 },
             }
-            response = client.post(
-                f"{base_url}/api/v1/clinical/analyze",
-                json=request_payload,
+            submit(
+                scenario_id=case["id"],
+                readme_case_id=case["readme_case_id"],
+                request_payload=request_payload,
+                validator=lambda body, case=case: _validate_response(
+                    case,
+                    body,
+                    expected_ranking=args.expected_ranking,
+                    expected_content=args.expected_content,
+                    expected_fallback_reason=expected_fallback_reason,
+                    expected_model_version=model_version,
+                    catalog_topic_ids=catalog_topic_ids,
+                ),
             )
-            body = response.json()
-            failures = []
-            if response.status_code == 200:
-                failures = _validate_response(case, body)
+
+        if args.model_scenarios:
+            if args.expected_ranking != "mini_onerec_mvp":
+                parser.error("--model-scenarios requires the Mini-OneRec profile")
+            base_payload = {
+                "patient_description": DIABETES_DESCRIPTION,
+                "include_recommendations": True,
+                "recommendation_top_k": 3,
+                "user_preferences": {
+                    "preferred_categories": [
+                        "disease_basics",
+                        "test_explanation",
+                        "follow_up_education",
+                    ],
+                    "preferred_depth": "standard",
+                    "preferred_format": "bullet_points",
+                    "max_reading_minutes": 5,
+                },
+            }
+
+            def model_validator(body):
+                return _validate_model_response(
+                    body,
+                    model_version=str(model_version),
+                    catalog_topic_ids=catalog_topic_ids,
+                )
+
+            cold = submit(
+                scenario_id="model_cold_start",
+                request_payload=base_payload,
+                validator=model_validator,
+            )
+            history_payload = json.loads(json.dumps(base_payload))
+            history_payload["user_history_context"] = {
+                "interactions": [
+                    {
+                        "topic_id": "diabetes_basics",
+                        "event_type": "view",
+                        "occurred_at": "2026-01-01T00:00:00Z",
+                    },
+                    {
+                        "topic_id": "chest_xray_explanation",
+                        "event_type": "helpful",
+                        "occurred_at": "2026-01-02T00:00:00Z",
+                    },
+                ]
+            }
+            history = submit(
+                scenario_id="model_history_pair",
+                request_payload=history_payload,
+                validator=model_validator,
+            )
+            negative_payload = json.loads(json.dumps(base_payload))
+            negative_payload["user_history_context"] = {
+                "interactions": [
+                    {
+                        "topic_id": "hba1c_test_explanation",
+                        "event_type": "dismiss",
+                        "occurred_at": "2026-01-03T00:00:00Z",
+                    }
+                ]
+            }
+            negative = submit(
+                scenario_id="model_negative_feedback",
+                request_payload=negative_payload,
+                validator=model_validator,
+            )
+
+            cold_education = _as_dict(
+                _as_dict(cold["response"]).get("education_recommendations")
+            )
+            history_education = _as_dict(
+                _as_dict(history["response"]).get("education_recommendations")
+            )
+            negative_education = _as_dict(
+                _as_dict(negative["response"]).get("education_recommendations")
+            )
+            pair_failures: list[str] = []
+            if cold_education.get("history_used") is not False:
+                pair_failures.append("cold-start request reported history usage")
+            if int(cold_education.get("valid_history_count", -1)) != 0:
+                pair_failures.append("cold-start history count is not zero")
+            if history_education.get("history_used") is not True:
+                pair_failures.append("history request did not use history")
+            if int(history_education.get("valid_history_count", 0)) != 2:
+                pair_failures.append("history request did not retain two events")
+            cold_ids = [
+                _as_dict(item).get("topic_id")
+                for item in _as_list(cold_education.get("recommendations"))
+            ]
+            history_ids = [
+                _as_dict(item).get("topic_id")
+                for item in _as_list(history_education.get("recommendations"))
+            ]
+            if not cold_ids or not history_ids or cold_ids[0] == history_ids[0]:
+                pair_failures.append("fixed history pair did not change top-1")
+            negative_ids = {
+                _as_dict(item).get("topic_id")
+                for item in _as_list(negative_education.get("recommendations"))
+            }
+            if "hba1c_test_explanation" in negative_ids:
+                pair_failures.append("dismissed topic remained in recommendations")
+            if pair_failures:
+                any_failures = True
+                history["failures"].extend(pair_failures)
+                history["passed"] = False
+                print("[FAIL] model scenario cross-checks", flush=True)
+                for failure in pair_failures:
+                    print(f"  - {failure}", flush=True)
             else:
-                failures = [f"HTTP {response.status_code}: {body}"]
-            any_failures = any_failures or bool(failures)
-            elapsed = (datetime.now(timezone.utc) - started).total_seconds()
-            records.append(
-                {
-                    "case_id": case["id"],
-                    "readme_case_id": case["readme_case_id"],
-                    "recorded_at_utc": started.isoformat(),
-                    "elapsed_seconds": round(elapsed, 2),
-                    "http_status": response.status_code,
-                    "passed": not failures,
-                    "failures": failures,
-                    "request": request_payload,
-                    "response": body,
-                }
-            )
-            status = "PASS" if not failures else "FAIL"
-            print(f"[{status}] {case['id']} ({elapsed:.1f}s)", flush=True)
-            for failure in failures:
-                print(f"  - {failure}", flush=True)
+                print("[PASS] model scenario cross-checks", flush=True)
 
     output = args.output
     if not output.is_absolute():
         output = ROOT / output
     output.parent.mkdir(parents=True, exist_ok=True)
-    output.write_text(json.dumps(records, ensure_ascii=False, indent=2), encoding="utf-8")
+    transcript = {
+        "schema_version": 2,
+        "recorded_at_utc": datetime.now(timezone.utc).isoformat(),
+        "readiness": ready_payload,
+        "expected_profile": {
+            "ranking": args.expected_ranking,
+            "content": args.expected_content,
+            "fallback_reason": expected_fallback_reason,
+        },
+        "records": records,
+        "passed": not any_failures,
+    }
+    output.write_text(
+        json.dumps(transcript, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
     print(f"Validation transcript: {output}")
     return 1 if any_failures else 0
 

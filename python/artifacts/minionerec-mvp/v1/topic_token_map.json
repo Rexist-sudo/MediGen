@@ -1,0 +1,20 @@
+{
+  "schema_version": 1,
+  "topic_id_to_token": {
+    "abdominal_pain_warning_signs": "<MED_TOPIC_0010>",
+    "appendicitis_care_process": "<MED_TOPIC_0009>",
+    "chest_xray_explanation": "<MED_TOPIC_0002>",
+    "diabetes_basics": "<MED_TOPIC_0011>",
+    "ecg_and_troponin_explanation": "<MED_TOPIC_0004>",
+    "follow_up_checklist": "<MED_TOPIC_0014>",
+    "hba1c_test_explanation": "<MED_TOPIC_0012>",
+    "heart_failure_daily_monitoring": "<MED_TOPIC_0007>",
+    "heart_failure_warning_signs": "<MED_TOPIC_0008>",
+    "hypothyroidism_basics": "<MED_TOPIC_0005>",
+    "medication_safety_basics": "<MED_TOPIC_0013>",
+    "myocardial_infarction_warning_signs": "<MED_TOPIC_0003>",
+    "pneumonia_basics": "<MED_TOPIC_0001>",
+    "thyroid_function_test_explanation": "<MED_TOPIC_0006>",
+    "when_to_seek_urgent_help": "<MED_TOPIC_0015>"
+  }
+}

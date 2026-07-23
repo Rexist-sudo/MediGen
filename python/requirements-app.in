@@ -1,3 +1,4 @@
+# Lightweight API/container profile.
 fastapi
 uvicorn[standard]
 pydantic

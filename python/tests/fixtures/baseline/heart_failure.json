@@ -1,0 +1,15 @@
+{
+  "case_id": "heart_failure",
+  "analysis_status": "completed",
+  "education_recommendations": {
+    "recommendation_status": "ok",
+    "strategy_used": "rule_v1_deepseek",
+    "candidate_source": "neo4j",
+    "candidate_count": 6,
+    "topic_ids": [
+      "heart_failure_warning_signs",
+      "heart_failure_daily_monitoring",
+      "myocardial_infarction_warning_signs"
+    ]
+  }
+}

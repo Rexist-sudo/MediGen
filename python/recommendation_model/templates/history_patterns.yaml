@@ -1,0 +1,14 @@
+schema_version: 1
+patterns:
+  no_history:
+    description: Empty sequence represented by the NO_HISTORY control token.
+  view_then_helpful:
+    events: [view_primary, helpful_external]
+    description: Ordered consumption followed by positive feedback in a related category.
+  dismiss_primary:
+    events: [dismiss_primary]
+    description: Hard negative feedback removes the exact topic before ranking.
+  helpful_external:
+    events: [helpful_external]
+    description: Positive feedback for a globally valid topic outside the request candidates.
+

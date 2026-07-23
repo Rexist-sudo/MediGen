@@ -1,0 +1,15 @@
+-r requirements-app.in
+
+# The Windows CUDA wheel is installed from requirements-torch-cu128.lock.txt.
+# This public-version constraint keeps model dependencies aligned.
+torch==2.7.1
+transformers==4.53.2
+accelerate==1.8.1
+peft==0.16.0
+huggingface-hub==0.33.4
+PyYAML==6.0.2
+numpy==2.4.6
+
+# Local verification tools share the same reproducible environment.
+pytest==9.1.1
+ruff==0.15.22

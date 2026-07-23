@@ -53,6 +53,7 @@ class UserHistoryContext(BaseModel):
 
 class KnowledgeTopic(BaseModel):
     topic_id: str = Field(min_length=1, max_length=100)
+    topic_token: str = Field(pattern=r"^<MED_TOPIC_[0-9]{4,}>$")
     title: str = Field(min_length=1)
     category: TopicCategory
     depth: Literal["beginner", "standard"]
@@ -112,7 +113,34 @@ class KnowledgeRecommendation(BaseModel):
 
 class EducationRecommendationResult(BaseModel):
     recommendation_status: Literal["ok", "degraded", "disabled"]
-    strategy_used: Literal["rule_v1", "rule_v1_deepseek", "none"]
+    # Compatibility projection retained for one API generation.
+    strategy_used: str = "none"
+    ranking_strategy_used: Literal[
+        "mini_onerec_mvp",
+        "rule_v1_fallback",
+        "none",
+    ] = "none"
+    content_strategy_used: Literal[
+        "deepseek_generated",
+        "catalog_fallback",
+        "none",
+    ] = "none"
+    model_version: str | None = None
+    model_ready: bool = False
+    fallback_reason: Literal[
+        "model_disabled",
+        "artifact_missing",
+        "artifact_incompatible",
+        "model_load_failed",
+        "model_not_ready",
+        "unsafe_context",
+        "no_rankable_candidates",
+        "inference_failed",
+        "cuda_oom",
+        "invalid_model_output",
+        "concurrency_busy",
+    ] | None = None
+    ranker_inference_ms: float | None = None
     candidate_source: Literal["neo4j", "local_catalog", "none"] = "none"
     candidate_cache_status: Literal["hit", "miss", "offline", "none"] = "none"
     content_cache_status: Literal["hit", "miss", "fallback", "none"] = "none"
@@ -131,4 +159,4 @@ class RecommendationContext(BaseModel):
     diagnosis_codes: list[str] = Field(default_factory=list)
     recommended_tests: list[str] = Field(default_factory=list)
     medication_names: list[str] = Field(default_factory=list)
-    demo_safe: bool = False
+    demo_safe: bool = True

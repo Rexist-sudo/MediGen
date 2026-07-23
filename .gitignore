@@ -1,3 +1,18 @@
+# Local reference material
 medigen_mvp_prototype_development_guide.md
-python/.env
 计划书.docx
+
+# Secrets and machine-local configuration
+python/.env
+
+# Workspace caches and editor metadata
+.pytest_cache/
+.ruff_cache/
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+
+# Local logs and process markers
+*.log
+*.pid

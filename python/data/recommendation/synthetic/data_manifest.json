@@ -1,0 +1,48 @@
+{
+  "candidate_permutation_scenario_count": 24,
+  "catalog_sha256": "d21429f89d91fbf1ddb47e5dac470ca0dc506b21bdba31052512329697ce8c0e",
+  "contains_real_phi": false,
+  "counterfactual_pair_count": 280,
+  "created_at": "2026-07-22T16:09:17.723098+00:00",
+  "dataset_sha256": "c27c4ac4b098ca92468a3209088772ee25f622aa6f62670880ac661e05bc07df",
+  "files": {
+    "test.jsonl": "0919906276bd7b9f1879d8975d9e439434b265ab974b2e1abdd08db6362d700a",
+    "train.jsonl": "dac9fde75ceb6743e71a4be9321c54d6b0e7daf4f6d0c54e30fedff21a5cd952",
+    "validation.jsonl": "087da74994f833936007673c25ac9383a8646944c509d12b7ff158954fb22a52"
+  },
+  "fixed_test_history_pair_count": 20,
+  "generator_git_sha": "c372249d2ad582c55ce4622b325521fb9ad402ce",
+  "negative_feedback_scenario_count": 150,
+  "negative_feedback_scenario_ratio": 0.25,
+  "no_history_scenario_count": 180,
+  "no_history_scenario_ratio": 0.3,
+  "scenario_count": 600,
+  "scenario_source_counts": {
+    "counterfactual_template": 300,
+    "manual_template": 102,
+    "preference_template": 102,
+    "rule_teacher": 96
+  },
+  "schema_version": 1,
+  "seed": 42,
+  "source_counts": {
+    "catalog_alignment": 391,
+    "counterfactual_template": 780,
+    "manual_template": 270,
+    "preference_template": 270,
+    "rule_teacher": 240
+  },
+  "split_scenario_counts": {
+    "test": 60,
+    "train": 480,
+    "validation": 60
+  },
+  "task_counts": {
+    "next_topic": 1560,
+    "topic_to_sid": 391
+  },
+  "test_rows": 198,
+  "topic_token_map_sha256": "3ebac0df4722d889113f467afec1821c81ef17d7002b91847385af28e86d2485",
+  "train_rows": 1563,
+  "validation_rows": 190
+}

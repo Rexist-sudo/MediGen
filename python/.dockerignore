@@ -1,5 +1,7 @@
 .env
 .venv/
+.venv-minionerec/
+.venv-train/
 .runtime/
 .pytest_cache/
 .ruff_cache/
@@ -8,3 +10,10 @@
 .coverage
 htmlcov/
 tests/
+artifacts/
+recommendation_model/runs/
+recommendation_model/checkpoints/
+recommendation_model/**/checkpoint-*/
+recommendation_model/wandb/
+recommendation_model/tensorboard/
+recommendation_model/logs/

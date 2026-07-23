@@ -25,6 +25,12 @@ web_directory = Path(__file__).resolve().parents[1] / "web"
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
     initialize_runtime_services()
+    if (
+        settings.recommendation_enabled
+        and settings.minionerec_enabled
+        and settings.minionerec_load_policy == "eager"
+    ):
+        get_recommendation_service().model_readiness(load=True)
     yield
     close_runtime_services()
 
@@ -84,15 +90,48 @@ def readiness_check() -> dict:
     llm_ready = settings.llm_backend == "fixture" or settings.deepseek_configured
     dependencies = runtime_status()
     infrastructure_ready = all(dependencies.values())
+    recommendation_service = get_recommendation_service()
+    model_enabled = (
+        settings.recommendation_enabled
+        and settings.minionerec_enabled
+        and settings.recommendation_ranker != "rule_v1"
+    )
+    should_load = model_enabled and (
+        settings.minionerec_load_policy == "eager"
+        or settings.minionerec_readiness_strict
+    )
+    model = recommendation_service.model_readiness(load=should_load)
+    if not model_enabled:
+        model_ready = True
+        model_status = "disabled"
+    else:
+        model_ready = model.artifact_valid and (
+            not settings.minionerec_readiness_strict or model.loaded
+        )
+        model_status = "ready" if model_ready else "not_ready"
     return {
         "status": (
             "ready"
-            if llm_ready and store_loaded and infrastructure_ready
+            if llm_ready and store_loaded and infrastructure_ready and model_ready
             else "not_ready"
         ),
         "llm_backend": settings.llm_backend,
         "deepseek_configured": settings.deepseek_configured,
         "recommendation_store_loaded": store_loaded,
+        "recommendation_model": {
+            "enabled": model_enabled,
+            "configured_strategy": settings.recommendation_ranker,
+            "configured": model.configured,
+            "artifact_valid": model.artifact_valid,
+            "loaded": model.loaded,
+            "load_policy": settings.minionerec_load_policy,
+            "model_version": model.model_version,
+            "device": model.device,
+            "dtype": model.dtype,
+            "fallback_available": settings.recommendation_rule_fallback_enabled,
+            "last_failure_code": model.last_failure_code,
+            "status": model_status,
+        },
         "dependencies": dependencies,
         "prototype_only": True,
     }

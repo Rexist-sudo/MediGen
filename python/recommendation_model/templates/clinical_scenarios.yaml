@@ -1,0 +1,50 @@
+schema_version: 1
+families:
+  - id: pneumonia
+    diagnosis_codes: [J18.1]
+    diagnosis_terms: [pneumonia, 肺炎]
+    recommended_tests: [chest X-ray, 胸部影像]
+    medication_names: []
+    primary_topic_id: chest_xray_explanation
+    secondary_topic_id: pneumonia_basics
+    positive_history_topic_id: hba1c_test_explanation
+  - id: myocardial_infarction
+    diagnosis_codes: [I21.0]
+    diagnosis_terms: [myocardial infarction, 心肌梗死]
+    recommended_tests: [ECG, troponin, 心电图, 肌钙蛋白]
+    medication_names: [aspirin]
+    primary_topic_id: ecg_and_troponin_explanation
+    secondary_topic_id: when_to_seek_urgent_help
+    positive_history_topic_id: chest_xray_explanation
+  - id: hypothyroidism
+    diagnosis_codes: [E03.9]
+    diagnosis_terms: [hypothyroidism, 甲状腺功能减退]
+    recommended_tests: [TSH, free T4]
+    medication_names: []
+    primary_topic_id: thyroid_function_test_explanation
+    secondary_topic_id: hypothyroidism_basics
+    positive_history_topic_id: chest_xray_explanation
+  - id: heart_failure
+    diagnosis_codes: [I50.9]
+    diagnosis_terms: [heart failure, 心力衰竭]
+    recommended_tests: [BNP, echocardiogram]
+    medication_names: [furosemide]
+    primary_topic_id: heart_failure_daily_monitoring
+    secondary_topic_id: when_to_seek_urgent_help
+    positive_history_topic_id: diabetes_basics
+  - id: appendicitis
+    diagnosis_codes: [K35.80]
+    diagnosis_terms: [appendicitis, 阑尾炎]
+    recommended_tests: [abdominal examination, abdominal imaging]
+    medication_names: []
+    primary_topic_id: appendicitis_care_process
+    secondary_topic_id: when_to_seek_urgent_help
+    positive_history_topic_id: heart_failure_daily_monitoring
+  - id: diabetes
+    diagnosis_codes: [E11.9]
+    diagnosis_terms: [type 2 diabetes, 2 型糖尿病]
+    recommended_tests: [HbA1c, 糖化血红蛋白]
+    medication_names: [metformin]
+    primary_topic_id: hba1c_test_explanation
+    secondary_topic_id: diabetes_basics
+    positive_history_topic_id: chest_xray_explanation

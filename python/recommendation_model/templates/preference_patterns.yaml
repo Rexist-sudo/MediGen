@@ -1,0 +1,42 @@
+schema_version: 1
+patterns:
+  - preferred_categories: [test_explanation]
+    excluded_categories: []
+    preferred_depth: beginner
+    preferred_format: bullet_points
+    max_reading_minutes: 3
+  - preferred_categories: [disease_basics]
+    excluded_categories: []
+    preferred_depth: beginner
+    preferred_format: brief
+    max_reading_minutes: 4
+  - preferred_categories: [follow_up_education]
+    excluded_categories: []
+    preferred_depth: standard
+    preferred_format: step_by_step
+    max_reading_minutes: 5
+  - preferred_categories: []
+    excluded_categories: []
+    preferred_depth: null
+    preferred_format: null
+    max_reading_minutes: null
+  - preferred_categories: [warning_signs]
+    excluded_categories: [disease_basics]
+    preferred_depth: beginner
+    preferred_format: question_answer
+    max_reading_minutes: 2
+  - preferred_categories: [test_explanation]
+    excluded_categories: [warning_signs]
+    preferred_depth: standard
+    preferred_format: question_answer
+    max_reading_minutes: 6
+  - preferred_categories: [care_process]
+    excluded_categories: [medication_safety]
+    preferred_depth: beginner
+    preferred_format: step_by_step
+    max_reading_minutes: 4
+  - preferred_categories: [medication_safety]
+    excluded_categories: [follow_up_education]
+    preferred_depth: beginner
+    preferred_format: bullet_points
+    max_reading_minutes: 1

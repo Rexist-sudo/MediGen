@@ -85,6 +85,34 @@ const labels = {
     knowledge_graph_candidates_empty: "已采用通用教育主题",
     audit_result_missing: "安全审计结果缺失",
     fixture_demo_only: "离线知识源",
+    mandatory_safety_override: "安全主题优先展示",
+    unknown_history_topic_ignored: "已忽略目录外历史主题",
+    history_missing_timestamps: "部分历史缺少时间信息",
+    unsafe_context: "推荐上下文采用固定安全路径",
+    ranker_fallback: "本地排序器已切换到规则回退",
+  },
+  rankingStrategy: {
+    mini_onerec_mvp: "本地 Mini-OneRec",
+    rule_v1_fallback: "规则回退",
+    none: "固定安全顺序",
+  },
+  contentStrategy: {
+    deepseek_generated: "DeepSeek 教育正文",
+    catalog_fallback: "主题目录正文",
+    none: "无正文",
+  },
+  fallbackReason: {
+    model_disabled: "模型配置关闭",
+    artifact_missing: "模型产物缺失",
+    artifact_incompatible: "模型产物与目录不匹配",
+    model_load_failed: "模型加载失败",
+    model_not_ready: "模型处于冷却状态",
+    unsafe_context: "审计结果限制模型路径",
+    no_rankable_candidates: "没有可排序候选",
+    inference_failed: "模型推理失败",
+    cuda_oom: "显存不足",
+    invalid_model_output: "模型输出校验失败",
+    concurrency_busy: "模型推理并发繁忙",
   },
 };
 
@@ -882,6 +910,16 @@ function renderAudit(response) {
       ["本分钟剩余额度", cache.rate_limit_remaining],
       ["教育正文缓存", cache.recommendation_cache === "hit" ? "命中" : (cache.recommendation_cache === "fallback" ? "基础内容" : "已写入")],
     ]));
+    const ranker = trace.recommendation_ranker || {};
+    const inferenceMs = Number(ranker.inference_ms);
+    rows.append(makeRecordRow("本地 Mini-OneRec", translated(ranker.used_strategy, labels.rankingStrategy, "固定安全顺序"), [
+      ["模型版本", ranker.model_version],
+      ["模型状态", ranker.model_ready ? "就绪" : "未就绪"],
+      ["回退原因", translated(ranker.fallback_reason, labels.fallbackReason, "无")],
+      ["排序耗时", Number.isFinite(inferenceMs) ? `${inferenceMs.toFixed(1)} 毫秒` : "—"],
+      ["候选主题", ranker.candidate_count],
+      ["有效历史", ranker.valid_history_count],
+    ]));
     const persistence = trace.persistence || {};
     const persistenceSeconds = supportingElapsedSeconds(response, "persistence");
     rows.append(makeRecordRow(persistence.provider, persistenceSeconds === null ? "会话与审计存储" : `会话与审计存储 · ${persistenceSeconds.toFixed(1)} 秒`, [
@@ -905,6 +943,19 @@ function renderRecommendations(response) {
   const data = response.education_recommendations || {};
   const grid = makeStage("教育内容", "依据病例相关性、医学主题候选与阅读偏好生成教育内容。", "教育主题遴选与内容生成");
   grid.append(makeProcessOverview("recommendations", response));
+  const ranker = makeBlock("排序执行记录", { wide: true, badge: translated(data.ranking_strategy_used, labels.rankingStrategy, "固定安全顺序") });
+  const inferenceMs = Number(data.ranker_inference_ms);
+  ranker.body.append(makeDefinitionGrid([
+    ["排序策略", translated(data.ranking_strategy_used, labels.rankingStrategy, "固定安全顺序")],
+    ["模型版本", displayValue(data.model_version)],
+    ["模型状态", data.model_ready ? "就绪" : "未就绪"],
+    ["回退原因", translated(data.fallback_reason, labels.fallbackReason, "无")],
+    ["排序耗时", Number.isFinite(inferenceMs) ? `${inferenceMs.toFixed(1)} 毫秒` : "—"],
+    ["正文策略", translated(data.content_strategy_used, labels.contentStrategy, "主题目录正文")],
+    ["候选数量", displayValue(data.candidate_count, 0)],
+    ["有效历史", displayValue(data.valid_history_count, 0)],
+  ]));
+  grid.append(ranker.block);
   const cards = makeBlock("教育内容卡片", { wide: true, badge: `${asList(data.recommendations).length} 张` });
   const cardList = createElement("div", "recommendation-list");
   asList(data.recommendations).forEach((item, index) => {

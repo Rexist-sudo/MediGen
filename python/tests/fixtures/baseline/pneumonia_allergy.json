@@ -1,0 +1,15 @@
+{
+  "case_id": "pneumonia_allergy",
+  "analysis_status": "completed",
+  "education_recommendations": {
+    "recommendation_status": "ok",
+    "strategy_used": "rule_v1_deepseek",
+    "candidate_source": "neo4j",
+    "candidate_count": 4,
+    "topic_ids": [
+      "myocardial_infarction_warning_signs",
+      "pneumonia_basics",
+      "chest_xray_explanation"
+    ]
+  }
+}
